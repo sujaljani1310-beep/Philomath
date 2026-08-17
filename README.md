@@ -8,7 +8,7 @@ The project began as a UI prototype during the Build Fellowship and was later re
 
 ---
 
-## Features
+## Features 
 
 - **Basic Mode** — simple conversational AI
 - **Manual Mode** — manually select an AI provider
