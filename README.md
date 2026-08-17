@@ -316,16 +316,16 @@ Git-based development
 ## Screenshots
 
 ### Basic Mode
-![Philomath Basic Mode](docs/screenshots/basic.jpg)
+<img src="docs/screenshots/basic.png" width="900">
 
 ### Manual Mode
-![Philomath Manual Mode](docs/screenshots/manual.jpg)
+<img src="docs/screenshots/manual.png" width="900">
 
 ### Auto Mode
-![Philomath Auto Mode](docs/screenshots/auto.jpg)
+<img src="docs/screenshots/auto.png" width="900">
 
 ### Persistent Conversations
-![Philomath Saved Conversations](docs/screenshots/conversations.jpg)
+<img src="docs/screenshots/conversations.png" width="900">
 ---
 ## Author
 
