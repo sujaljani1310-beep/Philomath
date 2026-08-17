@@ -313,7 +313,21 @@ Git-based development
 ```
 
 ---
+## Screenshots
 
+### Basic Mode
+![Philomath Basic Mode](docs/screenshots/01-basic-mode.png)
+
+### Manual Mode
+![Philomath Manual Mode](docs/screenshots/02-manual-mode.png)
+
+### Auto Mode
+![Philomath Auto Mode](docs/screenshots/03-auto-mode.png)
+
+### Persistent Conversations
+![Philomath Saved Conversations](docs/screenshots/04-saved-conversations.png)
+
+---
 ## Author
 
 **Sujal Jani**
