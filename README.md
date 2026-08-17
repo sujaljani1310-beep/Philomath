@@ -234,43 +234,12 @@ Philomath/
 
 ## Running Philomath Locally
 
-### Backend
+### Quick Start
 
-From the project directory:
-
-```bash
-cd backend
-source venv/bin/activate
-uvicorn app.main:app --reload
-```
-
-The FastAPI backend will normally run at:
-
-```text
-http://127.0.0.1:8000
-```
-
-FastAPI documentation is available at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### Frontend
-
-Open another terminal:
+From the main Philomath project directory:
 
 ```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Then open:
-
-```text
-http://localhost:3000
-```
+./start.sh
 
 ---
 
