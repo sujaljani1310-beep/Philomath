@@ -8,7 +8,7 @@ The project began as a UI prototype during the Build Fellowship and was later re
 
 ---
 
-## Features 
+## Features
 
 - **Basic Mode** — simple conversational AI
 - **Manual Mode** — manually select an AI provider
@@ -218,6 +218,9 @@ Philomath/
 │       │   └── brain/
 │       └── main.py
 │
+├── docs/
+│   └── screenshots/
+│
 ├── frontend/
 │   ├── app/
 │   ├── components/
@@ -227,7 +230,8 @@ Philomath/
 │   └── styles/
 │
 ├── .gitignore
-└── README.md
+├── README.md
+└── start.sh
 ```
 
 ---
@@ -240,6 +244,57 @@ From the main Philomath project directory:
 
 ```bash
 ./start.sh
+```
+
+This starts both:
+
+- **FastAPI backend** — `http://127.0.0.1:8000`
+- **Next.js frontend** — `http://localhost:3000`
+
+FastAPI documentation is available at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+To stop both the frontend and backend:
+
+```text
+Ctrl + C
+```
+
+To restart Philomath, simply run:
+
+```bash
+./start.sh
+```
+
+If the startup script does not have executable permission, run:
+
+```bash
+chmod +x start.sh
+```
+
+### Manual Start
+
+The backend and frontend can also be started separately if needed.
+
+#### Backend
+
+```bash
+cd backend
+source venv/bin/activate
+uvicorn app.main:app --reload
+```
+
+#### Frontend
+
+Open another terminal:
+
+```bash
+cd frontend
+npm run dev
+```
 
 ---
 
@@ -282,18 +337,23 @@ Git-based development
 ```
 
 ---
+
 ## Screenshots
 
 ### Basic Mode
+
 <img src="docs/screenshots/basic.png" width="900">
 
 ### Manual Mode
+
 <img src="docs/screenshots/manual.png" width="900">
 
 ### Auto Mode
+
 <img src="docs/screenshots/auto.png" width="900">
 
 ### Persistent Conversations
+
 <img src="docs/screenshots/conversations.png" width="900">
 
 ---
