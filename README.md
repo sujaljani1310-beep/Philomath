@@ -326,10 +326,11 @@ Git-based development
 
 ### Persistent Conversations
 <img src="docs/screenshots/conversations.png" width="900">
+
 ---
+
 ## Author
 
-**Sujal Jani**
-
+**Sujal Jani**  
 Computer Science  
 Suffolk University — Boston, MA
