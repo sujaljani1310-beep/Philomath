@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -8,23 +8,25 @@ from app.services.conversation_service import load_recent_messages
 
 load_dotenv()
 
-openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+DEFAULT_API_KEY = os.getenv("OPENROUTER_API_KEY")
+BASE_URL = "https://openrouter.ai/api/v1"
+MODEL = "openrouter/free"
 
-if openrouter_api_key:
-    openrouter_client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=openrouter_api_key
+
+def is_openrouter_connected(api_key: Optional[str] = None) -> bool:
+    return bool(api_key or DEFAULT_API_KEY)
+
+
+def build_openrouter_messages(
+    conversation_id: str,
+    new_message: str,
+    user_id: Optional[str] = None,
+) -> List[dict]:
+    history = (
+        load_recent_messages(conversation_id, user_id, limit=10)
+        if user_id
+        else []
     )
-else:
-    openrouter_client = None
-
-
-def is_openrouter_connected() -> bool:
-    return openrouter_client is not None
-
-
-def build_openrouter_messages(conversation_id: str, new_message: str) -> List[dict]:
-    history = load_recent_messages(conversation_id, limit=10)
 
     messages = [
         {
@@ -36,38 +38,39 @@ def build_openrouter_messages(conversation_id: str, new_message: str) -> List[di
                 "For beginner learning questions, explain step by step. "
                 "If you are unsure, say you are unsure. "
                 "Do not make up facts."
-            )
+            ),
         }
     ]
 
     for msg in history:
-        role = msg["role"]
-        content = msg["content"]
-
-        if role in ["user", "assistant"]:
+        if msg["role"] in ["user", "assistant"]:
             messages.append({
-                "role": role,
-                "content": content
+                "role": msg["role"],
+                "content": msg["content"],
             })
 
-    messages.append({
-        "role": "user",
-        "content": new_message
-    })
-
+    messages.append({"role": "user", "content": new_message})
     return messages
 
 
-def call_openrouter_basic(conversation_id: str, message: str) -> str:
-    if openrouter_client is None:
-        raise Exception("OpenRouter API key is missing. Add OPENROUTER_API_KEY to your .env file.")
+def call_openrouter_basic(
+    conversation_id: str,
+    message: str,
+    api_key: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    key = api_key or DEFAULT_API_KEY
 
-    messages = build_openrouter_messages(conversation_id, message)
+    if not key:
+        raise Exception("OpenRouter API key is missing.")
 
-    response = openrouter_client.chat.completions.create(
-        model="openrouter/free",
+    client = OpenAI(base_url=BASE_URL, api_key=key)
+    messages = build_openrouter_messages(conversation_id, message, user_id)
+
+    response = client.chat.completions.create(
+        model=MODEL,
         messages=messages,
-        max_tokens=700
+        max_tokens=700,
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""

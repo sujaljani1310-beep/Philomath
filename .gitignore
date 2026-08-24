@@ -1,9 +1,8 @@
 .env
 .env.local
-.env.*.local
-backend/.env
-frontend/.env
-frontend/.env.local
+.env.*
+backend/.env*
+frontend/.env*
 
 __pycache__/
 *.py[cod]

@@ -3,8 +3,10 @@ from pathlib import Path
 from typing import List
 
 from docx import Document
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pypdf import PdfReader
+
+from app.services.auth_service import AuthenticatedUser, get_current_user
 
 
 router = APIRouter()
@@ -90,7 +92,8 @@ def extract_file_text(
 
 @router.post("/api/files/upload")
 async def upload_files(
-    files: List[UploadFile] = File(...)
+    files: List[UploadFile] = File(...),
+    user: AuthenticatedUser = Depends(get_current_user),
 ):
     if not files:
         raise HTTPException(

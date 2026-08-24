@@ -1,9 +1,6 @@
 from typing import Optional
 
-from app.providers.cerebras_provider import (
-    call_cerebras,
-    is_cerebras_connected,
-)
+from app.providers.cerebras_provider import call_cerebras, is_cerebras_connected
 from app.services.brain.profiler import CATEGORIES
 
 
@@ -21,22 +18,16 @@ CLASSIFIER_PROMPT_PREFIX = (
 )
 
 
-def classify_ambiguous_request(message: str) -> Optional[str]:
-    """
-    Second-stage classifier used only when Philomath's local router
-    cannot confidently distinguish between models.
-
-    Cerebras is used only to classify the task category.
-    It never generates the actual user-facing answer.
-
-    Returns:
-        A valid Philomath category, or None if classification fails.
-    """
-
+def classify_ambiguous_request(
+    message: str,
+    api_key: Optional[str] = None,
+) -> Optional[str]:
     if not message or not message.strip():
         return None
 
-    if not is_cerebras_connected():
+    # The classifier may only use Cerebras when this signed-in user
+    # explicitly connected it. Never fall back to the app owner's env key.
+    if not api_key or not is_cerebras_connected(api_key):
         return None
 
     try:
@@ -51,6 +42,8 @@ def classify_ambiguous_request(message: str) -> Optional[str]:
         raw_response = call_cerebras(
             conversation_id="__router_classifier__",
             message=prompt,
+            api_key=api_key,
+            user_id=None,
         )
 
         if not raw_response:
@@ -68,8 +61,6 @@ def classify_ambiguous_request(message: str) -> Optional[str]:
         if cleaned in CATEGORIES:
             return cleaned
 
-        # Small recovery in case the model responds with something like:
-        # "Category: coding"
         for category in CATEGORIES:
             if cleaned == f"category: {category}":
                 return category
@@ -77,6 +68,4 @@ def classify_ambiguous_request(message: str) -> Optional[str]:
         return None
 
     except Exception:
-        # Routing should never fail just because the optional classifier
-        # fallback failed.
         return None

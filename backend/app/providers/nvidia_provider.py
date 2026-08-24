@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -8,65 +8,68 @@ from app.services.conversation_service import load_recent_messages
 
 load_dotenv()
 
-nvidia_api_key = os.getenv("NVIDIA_API_KEY")
+DEFAULT_API_KEY = os.getenv("NVIDIA_API_KEY")
+BASE_URL = "https://integrate.api.nvidia.com/v1"
+MODEL = "meta/llama-3.1-8b-instruct"
 
-if nvidia_api_key:
-    nvidia_client = OpenAI(
-        base_url="https://integrate.api.nvidia.com/v1",
-        api_key=nvidia_api_key
+
+def is_nvidia_connected(api_key: Optional[str] = None) -> bool:
+    return bool(api_key or DEFAULT_API_KEY)
+
+
+def build_nvidia_messages(
+    conversation_id: str,
+    new_message: str,
+    user_id: Optional[str] = None,
+) -> List[dict]:
+    history = (
+        load_recent_messages(conversation_id, user_id, limit=10)
+        if user_id
+        else []
     )
-else:
-    nvidia_client = None
-
-
-def is_nvidia_connected() -> bool:
-    return nvidia_client is not None
-
-
-def build_nvidia_messages(conversation_id: str, new_message: str) -> List[dict]:
-    history = load_recent_messages(conversation_id, limit=10)
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are Philomath Manual Mode using NVIDIA NIM. "
+                "You are Philomath using NVIDIA NIM. "
                 "Answer clearly, helpfully, and directly. "
                 "Use previous messages to understand follow-up questions. "
                 "If the user asks for coding help, explain step by step. "
                 "Do not make up facts."
-            )
+            ),
         }
     ]
 
     for msg in history:
-        role = msg["role"]
-        content = msg["content"]
-
-        if role in ["user", "assistant"]:
+        if msg["role"] in ["user", "assistant"]:
             messages.append({
-                "role": role,
-                "content": content
+                "role": msg["role"],
+                "content": msg["content"],
             })
 
-    messages.append({
-        "role": "user",
-        "content": new_message
-    })
-
+    messages.append({"role": "user", "content": new_message})
     return messages
 
 
-def call_nvidia(conversation_id: str, message: str) -> str:
-    if nvidia_client is None:
-        raise Exception("NVIDIA API key is missing. Add NVIDIA_API_KEY to your .env file.")
+def call_nvidia(
+    conversation_id: str,
+    message: str,
+    api_key: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    key = api_key or DEFAULT_API_KEY
 
-    messages = build_nvidia_messages(conversation_id, message)
+    if not key:
+        raise Exception("NVIDIA API key is missing.")
 
-    response = nvidia_client.chat.completions.create(
-        model="meta/llama-3.1-8b-instruct",
+    client = OpenAI(base_url=BASE_URL, api_key=key)
+    messages = build_nvidia_messages(conversation_id, message, user_id)
+
+    response = client.chat.completions.create(
+        model=MODEL,
         messages=messages,
-        max_tokens=700
+        max_tokens=700,
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""

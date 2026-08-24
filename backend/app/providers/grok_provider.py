@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -8,65 +8,68 @@ from app.services.conversation_service import load_recent_messages
 
 load_dotenv()
 
-grok_api_key = os.getenv("GROK_API_KEY")
+DEFAULT_API_KEY = os.getenv("GROK_API_KEY")
+BASE_URL = "https://api.x.ai/v1"
+MODEL = os.getenv("GROK_MODEL", "grok-4.3")
 
-if grok_api_key:
-    grok_client = OpenAI(
-        base_url="https://api.x.ai/v1",
-        api_key=grok_api_key
+
+def is_grok_connected(api_key: Optional[str] = None) -> bool:
+    return bool(api_key or DEFAULT_API_KEY)
+
+
+def build_grok_messages(
+    conversation_id: str,
+    new_message: str,
+    user_id: Optional[str] = None,
+) -> List[dict]:
+    history = (
+        load_recent_messages(conversation_id, user_id, limit=10)
+        if user_id
+        else []
     )
-else:
-    grok_client = None
-
-
-def is_grok_connected() -> bool:
-    return grok_client is not None
-
-
-def build_grok_messages(conversation_id: str, new_message: str) -> List[dict]:
-    history = load_recent_messages(conversation_id, limit=10)
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are Philomath Manual Mode using Grok. "
+                "You are Philomath using Grok. "
                 "Answer clearly, helpfully, and directly. "
                 "Use previous messages to understand follow-up questions. "
                 "If the user asks for coding help, explain step by step. "
                 "Do not make up facts."
-            )
+            ),
         }
     ]
 
     for msg in history:
-        role = msg["role"]
-        content = msg["content"]
-
-        if role in ["user", "assistant"]:
+        if msg["role"] in ["user", "assistant"]:
             messages.append({
-                "role": role,
-                "content": content
+                "role": msg["role"],
+                "content": msg["content"],
             })
 
-    messages.append({
-        "role": "user",
-        "content": new_message
-    })
-
+    messages.append({"role": "user", "content": new_message})
     return messages
 
 
-def call_grok(conversation_id: str, message: str) -> str:
-    if grok_client is None:
-        raise Exception("Grok API key is missing. Add GROK_API_KEY to your .env file.")
+def call_grok(
+    conversation_id: str,
+    message: str,
+    api_key: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    key = api_key or DEFAULT_API_KEY
 
-    messages = build_grok_messages(conversation_id, message)
+    if not key:
+        raise Exception("Grok API key is missing.")
 
-    response = grok_client.chat.completions.create(
-        model="grok-4.3",
+    client = OpenAI(base_url=BASE_URL, api_key=key)
+    messages = build_grok_messages(conversation_id, message, user_id)
+
+    response = client.chat.completions.create(
+        model=MODEL,
         messages=messages,
-        max_tokens=700
+        max_tokens=700,
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""

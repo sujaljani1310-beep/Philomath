@@ -11,7 +11,11 @@ from app.services.brain.scorer import (
 )
 
 
-def route(context: RoutingContext) -> RoutingDecision:
+def route(
+    context: RoutingContext,
+    available_provider_keys=None,
+    classifier_api_key=None,
+) -> RoutingDecision:
     """
     Main Philomath Auto Mode routing pipeline.
 
@@ -25,7 +29,7 @@ def route(context: RoutingContext) -> RoutingDecision:
     """
 
     profile = profile_request(context)
-    available_models = get_available_models()
+    available_models = get_available_models(available_provider_keys)
 
     filtered_models, unmet_confirmed, unmet_inferred = (
         filter_by_hard_requirements(
@@ -98,7 +102,8 @@ def route(context: RoutingContext) -> RoutingDecision:
         and decision._raw_margin < MARGIN_CONFIDENCE_THRESHOLD
     ):
         classified_category = classify_ambiguous_request(
-            context.message
+            context.message,
+            api_key=classifier_api_key,
         )
 
         if classified_category:

@@ -26,8 +26,11 @@ import {
   Network,
   X,
   Trash2,
+  KeyRound,
+  LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { getSupabaseBrowserClient } from "@/lib/supabase"
 
 type Mode = "basic" | "manual" | "auto"
 
@@ -63,6 +66,15 @@ type AIProvider = {
   description: string
   icon: any
   color: string
+}
+
+type AIIntegration = {
+  id?: string
+  provider: string
+  display_name: string
+  api_key_last4: string
+  created_at?: string
+  updated_at?: string
 }
 
 const modes = [
@@ -125,7 +137,9 @@ const aiProviders: AIProvider[] = [
   },
 ]
 
-const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
+const DEFAULT_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"
+
+const createConversationId = () => `chat_${crypto.randomUUID()}`
 
 export default function AGIInterface() {
   const [selectedMode, setSelectedMode] = useState<Mode>("basic")
@@ -140,6 +154,14 @@ export default function AGIInterface() {
   const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [authLoading, setAuthLoading] = useState(true)
+  const [session, setSession] = useState<any>(null)
+  const [integrations, setIntegrations] = useState<AIIntegration[]>([])
+  const [integrationsLoading, setIntegrationsLoading] = useState(false)
+  const [addAiOpen, setAddAiOpen] = useState(false)
+  const [aiName, setAiName] = useState("")
+  const [aiApiKey, setAiApiKey] = useState("")
+  const [addingAi, setAddingAi] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -153,9 +175,60 @@ export default function AGIInterface() {
     setTimeout(() => setToastMessage(null), 3000)
   }, [])
 
+  const authorizedFetch = useCallback(
+    async (url: string, options: RequestInit = {}) => {
+      const headers = new Headers(options.headers || {})
+
+      if (session?.access_token) {
+        headers.set("Authorization", `Bearer ${session.access_token}`)
+      }
+
+      return fetch(url, {
+        ...options,
+        headers,
+      })
+    },
+    [session?.access_token],
+  )
+
+  const loadIntegrations = useCallback(async () => {
+    if (!session?.access_token) return
+
+    setIntegrationsLoading(true)
+
+    try {
+      const response = await authorizedFetch(`${backendUrl}/api/integrations`)
+
+      if (!response.ok) {
+        throw new Error("Could not load your AIs")
+      }
+
+      const data = await response.json()
+      const items: AIIntegration[] = Array.isArray(data.integrations) ? data.integrations : []
+
+      setIntegrations(items)
+
+      if (items.length === 0) {
+        setSelectedProvider(null)
+        setAddAiOpen(true)
+      } else {
+        setSelectedProvider((current) =>
+          current && items.some((item) => item.provider === current)
+            ? current
+            : items[0].provider,
+        )
+      }
+    } catch (error) {
+      console.log("[Philomath] Could not load AI integrations:", error)
+      showToast("Could not load your saved AIs.")
+    } finally {
+      setIntegrationsLoading(false)
+    }
+  }, [authorizedFetch, backendUrl, session?.access_token, showToast])
+
   const loadConversations = useCallback(async () => {
     try {
-      const response = await fetch(`${backendUrl}/api/conversations`)
+      const response = await authorizedFetch(`${backendUrl}/api/conversations`)
 
       if (!response.ok) return
 
@@ -178,12 +251,12 @@ export default function AGIInterface() {
     } catch (error) {
       console.log("[Philomath] Could not load conversations from backend:", error)
     }
-  }, [backendUrl])
+  }, [authorizedFetch, backendUrl])
 
   const loadConversationMessages = useCallback(
     async (conversationId: string) => {
       try {
-        const response = await fetch(`${backendUrl}/api/conversations/${conversationId}`)
+        const response = await authorizedFetch(`${backendUrl}/api/conversations/${conversationId}`)
 
         if (!response.ok) return
 
@@ -216,12 +289,51 @@ export default function AGIInterface() {
         console.log("[Philomath] Could not load conversation messages:", error)
       }
     },
-    [backendUrl],
+    [authorizedFetch, backendUrl],
   )
 
   useEffect(() => {
+    const supabase = getSupabaseBrowserClient()
+
+    if (!supabase) {
+      setAuthLoading(false)
+      return
+    }
+
+    let mounted = true
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return
+      setSession(data.session)
+      setAuthLoading(false)
+    })
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return
+
+      setSession(nextSession)
+      setAuthLoading(false)
+
+      if (!nextSession) {
+        setConversations([])
+        setActiveConversationId(null)
+        setIntegrations([])
+        setSelectedProvider(null)
+      }
+    })
+
+    return () => {
+      mounted = false
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!session?.access_token) return
+
     loadConversations()
-  }, [loadConversations])
+    loadIntegrations()
+  }, [session?.access_token, loadConversations, loadIntegrations])
 
   useEffect(() => {
     if (!activeConversationId) return
@@ -261,7 +373,7 @@ export default function AGIInterface() {
           formData.append("files", file)
         })
 
-        const uploadResponse = await fetch(`${backendUrl}/api/files/upload`, {
+        const uploadResponse = await authorizedFetch(`${backendUrl}/api/files/upload`, {
           method: "POST",
           body: formData,
         })
@@ -301,7 +413,7 @@ export default function AGIInterface() {
     }
 
     if (!conversationId) {
-      conversationId = `chat_${Date.now()}`
+      conversationId = createConversationId()
 
       const newConversation: Conversation = {
         id: conversationId,
@@ -347,7 +459,7 @@ export default function AGIInterface() {
         payload.provider = selectedProvider
       }
 
-      const response = await fetch(`${backendUrl}/api/chat/send`, {
+      const response = await authorizedFetch(`${backendUrl}/api/chat/send`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -428,7 +540,7 @@ export default function AGIInterface() {
       }
     }
 
-    const newConversationId = `chat_${Date.now()}`
+    const newConversationId = createConversationId()
 
     const newConversation: Conversation = {
       id: newConversationId,
@@ -454,7 +566,7 @@ export default function AGIInterface() {
       if (filtered.length > 0) {
         setActiveConversationId(filtered[0].id)
       } else {
-        const newChatId = `chat_${Date.now()}`
+        const newChatId = createConversationId()
 
         const newChat: Conversation = {
           id: newChatId,
@@ -473,7 +585,7 @@ export default function AGIInterface() {
   })
 
   try {
-    const response = await fetch(`${backendUrl}/api/conversations/${conversationId}`, {
+    const response = await authorizedFetch(`${backendUrl}/api/conversations/${conversationId}`, {
       method: "DELETE",
     })
 
@@ -515,6 +627,92 @@ export default function AGIInterface() {
 
   const handleVoiceInput = () => {
     showToast("Voice input is coming soon.")
+  }
+
+  const handleGoogleLogin = async () => {
+    const supabase = getSupabaseBrowserClient()
+
+    if (!supabase) {
+      showToast("Supabase login is not configured yet.")
+      return
+    }
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+
+    if (error) {
+      showToast(error.message)
+    }
+  }
+
+  const handleSignOut = async () => {
+    const supabase = getSupabaseBrowserClient()
+
+    if (!supabase) return
+
+    await supabase.auth.signOut()
+    setSettingsOpen(false)
+  }
+
+  const handleAddAI = async () => {
+    if (!aiName.trim() || !aiApiKey.trim()) {
+      showToast("Enter the AI name and API key.")
+      return
+    }
+
+    setAddingAi(true)
+
+    try {
+      const response = await authorizedFetch(`${backendUrl}/api/integrations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ai_name: aiName.trim(),
+          api_key: aiApiKey.trim(),
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Could not add this AI")
+      }
+
+      setAiName("")
+      setAiApiKey("")
+      setAddAiOpen(false)
+      showToast(`${data.integration?.display_name || "AI"} added.`)
+      await loadIntegrations()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not add this AI"
+      showToast(message)
+    } finally {
+      setAddingAi(false)
+    }
+  }
+
+  const handleDeleteAI = async (provider: string) => {
+    try {
+      const response = await authorizedFetch(`${backendUrl}/api/integrations/${provider}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        throw new Error("Could not remove this AI")
+      }
+
+      showToast("AI removed.")
+      await loadIntegrations()
+    } catch (error) {
+      console.log("[Philomath] Could not remove AI:", error)
+      showToast("Could not remove this AI.")
+    }
   }
 
   const selectProvider = (providerId: string) => {
@@ -657,12 +855,17 @@ export default function AGIInterface() {
   const renderManualModePanel = () => {
     if (selectedMode !== "manual") return null
 
+    const connectedProviderIds = new Set(integrations.map((item) => item.provider))
+    const connectedProviders = aiProviders.filter((provider) =>
+      connectedProviderIds.has(provider.id),
+    )
+
     return (
       <div className="mx-auto w-full max-w-3xl px-4 pb-4">
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-700/50 bg-gray-800/30 p-4">
           <span className="text-sm font-medium text-gray-400">Select Provider:</span>
 
-          {aiProviders.map((provider) => (
+          {connectedProviders.map((provider) => (
             <button
               key={provider.id}
               onClick={() => selectProvider(provider.id)}
@@ -683,6 +886,21 @@ export default function AGIInterface() {
               {selectedProvider === provider.id && <div className="h-2 w-2 rounded-full bg-blue-400" />}
             </button>
           ))}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setAddAiOpen(true)}
+            className="border-blue-500/40 bg-transparent text-blue-300 hover:bg-blue-500/10"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add AI
+          </Button>
+
+          {connectedProviders.length === 0 && !integrationsLoading && (
+            <span className="text-sm text-gray-500">No AI connected yet.</span>
+          )}
         </div>
 
         {selectedProvider && (
@@ -695,6 +913,54 @@ export default function AGIInterface() {
             </div>
           </div>
         )}
+      </div>
+    )
+  }
+
+  const supabaseConfigured = Boolean(getSupabaseBrowserClient())
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-blue-950/30 to-black text-white">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+          <p className="text-sm text-gray-400">Opening Philomath...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-slate-900 via-blue-950/40 to-black px-6 text-white">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(59,130,246,0.18),transparent_55%)]" />
+
+        <div className="relative w-full max-w-md rounded-3xl border border-gray-700/60 bg-gray-900/70 p-8 text-center shadow-2xl backdrop-blur-xl">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-500/30 bg-blue-500/10">
+            <Brain className="h-7 w-7 text-blue-300" />
+          </div>
+
+          <h1 className="bg-gradient-to-r from-white via-blue-200 to-blue-400 bg-clip-text text-4xl font-bold text-transparent">
+            Philomath
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-gray-400">
+            Sign in, connect your own AI, and use Philomath with your API key.
+          </p>
+
+          {supabaseConfigured ? (
+            <Button
+              onClick={handleGoogleLogin}
+              className="mt-8 h-12 w-full bg-white text-gray-900 hover:bg-gray-100"
+            >
+              <span className="mr-3 flex h-6 w-6 items-center justify-center rounded-full bg-white text-base font-bold text-blue-600">G</span>
+              Continue with Google
+            </Button>
+          ) : (
+            <div className="mt-8 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-left text-sm text-amber-200">
+              Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY to frontend/.env.local first.
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -723,17 +989,128 @@ export default function AGIInterface() {
         </div>
       )}
 
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+      <Dialog open={addAiOpen} onOpenChange={setAddAiOpen}>
         <DialogContent className="border-gray-700 bg-gray-900 text-white">
+          <DialogHeader>
+            <DialogTitle>Add AI</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <p className="text-sm leading-6 text-gray-400">
+              Enter the AI name and your API key. Philomath encrypts the key on the backend and never shows it again.
+            </p>
+
+            <div>
+              <label className="mb-2 block text-sm text-gray-300">AI name</label>
+              <Input
+                value={aiName}
+                onChange={(e) => setAiName(e.target.value)}
+                placeholder="Gemini, OpenRouter, Cerebras, NVIDIA, or Grok"
+                className="border-gray-700 bg-gray-800 text-white"
+                autoComplete="off"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm text-gray-300">API key</label>
+              <Input
+                type="password"
+                value={aiApiKey}
+                onChange={(e) => setAiApiKey(e.target.value)}
+                placeholder="Paste API key"
+                className="border-gray-700 bg-gray-800 text-white"
+                autoComplete="off"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddAI()
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setAddAiOpen(false)}
+              disabled={addingAi}
+              className="text-gray-300"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddAI}
+              disabled={addingAi || !aiName.trim() || !aiApiKey.trim()}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              <KeyRound className="mr-2 h-4 w-4" />
+              {addingAi ? "Adding..." : "Add AI"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto border-gray-700 bg-gray-900 text-white">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-5 py-4">
             <div>
-              <label className="mb-2 block text-sm text-gray-400">Theme</label>
-              <div className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-gray-300">
-                Dark mode
+              <label className="mb-2 block text-sm text-gray-400">Signed in as</label>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-700 bg-gray-800 px-4 py-3">
+                <span className="truncate text-sm text-gray-200">{session.user?.email || "Google user"}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSignOut}
+                  className="text-gray-400 hover:text-red-300"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign out
+                </Button>
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label className="block text-sm text-gray-400">Your AIs</label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddAiOpen(true)}
+                  className="border-blue-500/40 bg-transparent text-blue-300 hover:bg-blue-500/10"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add AI
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {integrations.map((integration) => (
+                  <div
+                    key={integration.provider}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-gray-700 bg-gray-800 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-100">{integration.display_name}</div>
+                      <div className="text-xs text-gray-500">API key ••••{integration.api_key_last4}</div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteAI(integration.provider)}
+                      className="text-gray-400 hover:bg-red-500/10 hover:text-red-300"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+
+                {!integrationsLoading && integrations.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-gray-700 bg-gray-800/50 px-4 py-4 text-sm text-gray-500">
+                    No AI connected yet. Add one with its API key.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -750,7 +1127,7 @@ export default function AGIInterface() {
             <div>
               <label className="mb-2 block text-sm text-gray-400">About</label>
               <div className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-gray-300">
-                Philomath AI assistant prototype
+                Philomath AI assistant
               </div>
             </div>
           </div>

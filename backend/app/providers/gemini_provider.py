@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 from google import genai
@@ -8,40 +9,50 @@ from app.services.conversation_service import load_recent_messages
 
 load_dotenv()
 
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-
-if gemini_api_key:
-    gemini_client = genai.Client(api_key=gemini_api_key)
-else:
-    gemini_client = None
+DEFAULT_API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL = "gemini-2.5-flash"
 
 
-def is_gemini_connected() -> bool:
-    return gemini_client is not None
+def is_gemini_connected(api_key: Optional[str] = None) -> bool:
+    return bool(api_key or DEFAULT_API_KEY)
 
 
-def build_gemini_context(conversation_id: str, new_message: str) -> str:
-    history = load_recent_messages(conversation_id, limit=10)
+def build_gemini_context(
+    conversation_id: str,
+    new_message: str,
+    user_id: Optional[str] = None,
+) -> str:
+    history = (
+        load_recent_messages(conversation_id, user_id, limit=10)
+        if user_id
+        else []
+    )
 
     context_text = ""
 
     for msg in history:
-        role = msg["role"]
-        content = msg["content"]
-        context_text += f"{role.upper()}: {content}\n\n"
+        context_text += f"{msg['role'].upper()}: {msg['content']}\n\n"
 
     context_text += f"USER: {new_message}\n\n"
-
     return context_text
 
 
-def call_gemini_search(conversation_id: str, message: str) -> str:
-    if gemini_client is None:
-        raise Exception("Gemini API key is missing. Add GEMINI_API_KEY to your .env file.")
+def call_gemini_search(
+    conversation_id: str,
+    message: str,
+    api_key: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    key = api_key or DEFAULT_API_KEY
 
+    if not key:
+        raise Exception("Gemini API key is missing.")
+
+    client = genai.Client(api_key=key)
     conversation_context = build_gemini_context(
         conversation_id=conversation_id,
-        new_message=message
+        new_message=message,
+        user_id=user_id,
     )
 
     philomath_prompt = f"""
@@ -62,18 +73,13 @@ Conversation:
 Assistant answer:
 """
 
-    grounding_tool = types.Tool(
-        google_search=types.GoogleSearch()
-    )
+    grounding_tool = types.Tool(google_search=types.GoogleSearch())
+    config = types.GenerateContentConfig(tools=[grounding_tool])
 
-    config = types.GenerateContentConfig(
-        tools=[grounding_tool]
-    )
-
-    response = gemini_client.models.generate_content(
-        model="gemini-2.5-flash",
+    response = client.models.generate_content(
+        model=MODEL,
         contents=philomath_prompt,
-        config=config
+        config=config,
     )
 
-    return response.text
+    return response.text or ""
