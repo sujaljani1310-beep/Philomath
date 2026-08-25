@@ -141,6 +141,8 @@ const DEFAULT_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0
 
 const createConversationId = () => `chat_${crypto.randomUUID()}`
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 export default function AGIInterface() {
   const [selectedMode, setSelectedMode] = useState<Mode>("basic")
   const [inputValue, setInputValue] = useState("")
@@ -162,6 +164,7 @@ export default function AGIInterface() {
   const [aiName, setAiName] = useState("")
   const [aiApiKey, setAiApiKey] = useState("")
   const [addingAi, setAddingAi] = useState(false)
+  const [startupLoading, setStartupLoading] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -191,13 +194,58 @@ export default function AGIInterface() {
     [session?.access_token],
   )
 
+  const authorizedFetchWithRetry = useCallback(
+    async (url: string, options: RequestInit = {}, maxAttempts = 6) => {
+      let lastError: unknown = null
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 12000)
+
+        try {
+          const response = await authorizedFetch(url, {
+            ...options,
+            signal: controller.signal,
+          })
+
+          window.clearTimeout(timeout)
+
+          const retryableStatus = [408, 425, 429, 500, 502, 503, 504].includes(
+            response.status,
+          )
+
+          if (response.ok || !retryableStatus) {
+            return response
+          }
+
+          lastError = new Error(
+            `Backend temporarily unavailable (${response.status})`,
+          )
+        } catch (error) {
+          window.clearTimeout(timeout)
+          lastError = error
+        }
+
+        if (attempt < maxAttempts - 1) {
+          const delay = Math.min(1500 * 2 ** attempt, 8000)
+          await sleep(delay)
+        }
+      }
+
+      throw lastError instanceof Error
+        ? lastError
+        : new Error("Could not reach Philomath backend")
+    },
+    [authorizedFetch],
+  )
+
   const loadIntegrations = useCallback(async () => {
     if (!session?.access_token) return
 
     setIntegrationsLoading(true)
 
     try {
-      const response = await authorizedFetch(`${backendUrl}/api/integrations`)
+      const response = await authorizedFetchWithRetry(`${backendUrl}/api/integrations`)
 
       if (!response.ok) {
         throw new Error("Could not load your AIs")
@@ -224,11 +272,11 @@ export default function AGIInterface() {
     } finally {
       setIntegrationsLoading(false)
     }
-  }, [authorizedFetch, backendUrl, session?.access_token, showToast])
+  }, [authorizedFetchWithRetry, backendUrl, session?.access_token, showToast])
 
   const loadConversations = useCallback(async () => {
     try {
-      const response = await authorizedFetch(`${backendUrl}/api/conversations`)
+      const response = await authorizedFetchWithRetry(`${backendUrl}/api/conversations`)
 
       if (!response.ok) return
 
@@ -251,12 +299,12 @@ export default function AGIInterface() {
     } catch (error) {
       console.log("[Philomath] Could not load conversations from backend:", error)
     }
-  }, [authorizedFetch, backendUrl])
+  }, [authorizedFetchWithRetry, backendUrl])
 
   const loadConversationMessages = useCallback(
     async (conversationId: string) => {
       try {
-        const response = await authorizedFetch(`${backendUrl}/api/conversations/${conversationId}`)
+        const response = await authorizedFetchWithRetry(`${backendUrl}/api/conversations/${conversationId}`)
 
         if (!response.ok) return
 
@@ -289,7 +337,7 @@ export default function AGIInterface() {
         console.log("[Philomath] Could not load conversation messages:", error)
       }
     },
-    [authorizedFetch, backendUrl],
+    [authorizedFetchWithRetry, backendUrl],
   )
 
   useEffect(() => {
@@ -319,6 +367,7 @@ export default function AGIInterface() {
         setActiveConversationId(null)
         setIntegrations([])
         setSelectedProvider(null)
+        setStartupLoading(false)
       }
     })
 
@@ -329,10 +378,33 @@ export default function AGIInterface() {
   }, [])
 
   useEffect(() => {
-    if (!session?.access_token) return
+    if (!session?.access_token) {
+      setStartupLoading(false)
+      return
+    }
 
-    loadConversations()
-    loadIntegrations()
+    let cancelled = false
+
+    const startPhilomath = async () => {
+      setStartupLoading(true)
+
+      try {
+        await Promise.all([
+          loadConversations(),
+          loadIntegrations(),
+        ])
+      } finally {
+        if (!cancelled) {
+          setStartupLoading(false)
+        }
+      }
+    }
+
+    void startPhilomath()
+
+    return () => {
+      cancelled = true
+    }
   }, [session?.access_token, loadConversations, loadIntegrations])
 
   useEffect(() => {
@@ -925,6 +997,20 @@ export default function AGIInterface() {
         <div className="text-center">
           <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
           <p className="text-sm text-gray-400">Opening Philomath...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (session && startupLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-blue-950/30 to-black px-6 text-white">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+          <p className="text-sm font-medium text-gray-300">Starting Philomath...</p>
+          <p className="mt-2 text-xs text-gray-500">
+            Restoring your AIs and conversations. This can take a moment after the backend has been idle.
+          </p>
         </div>
       </div>
     )
