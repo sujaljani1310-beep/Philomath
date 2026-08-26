@@ -4,7 +4,7 @@ Philomath is a multi-AI assistant that lets users connect their own AI providers
 
 🌐 Live App: https://philomath-umber.vercel.app/
 
-## ✨ Features
+## ✨ 
 
 - Google authentication
 - Bring Your Own API Key (BYOK)
