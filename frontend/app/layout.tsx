@@ -10,7 +10,7 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: "AGI - Artificial General Intelligence",
+  title: "Philomath | Your AI Workspace",
   description: "Modern AI-powered assistant interface",
   generator: "v0.app",
 }
