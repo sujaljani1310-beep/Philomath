@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.models.schemas import AddAIRequest
 from app.services.auth_service import AuthenticatedUser, get_current_user
+from app.services.startup_service import get_startup_user, list_startup_integrations
 from app.services.integration_service import (
     delete_integration,
-    list_integrations,
     save_integration,
 )
 
@@ -12,11 +12,11 @@ router = APIRouter()
 
 
 @router.get("/api/integrations")
-def get_integrations(
-    user: AuthenticatedUser = Depends(get_current_user),
+async def get_integrations(
+    user: AuthenticatedUser = Depends(get_startup_user),
 ):
     return {
-        "integrations": list_integrations(user.id),
+        "integrations": await list_startup_integrations(user.id),
     }
 
 
