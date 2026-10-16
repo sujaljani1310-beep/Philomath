@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends
 
 from app.services.auth_service import AuthenticatedUser, get_current_user
+from app.services.startup_service import get_startup_user, list_startup_conversations
+from app.services.persistence import PersistenceUnavailable
 from app.services.conversation_service import (
     delete_conversation,
-    get_all_conversations,
     get_conversation_messages,
     is_supabase_connected,
 )
@@ -12,15 +13,10 @@ router = APIRouter()
 
 
 @router.get("/api/conversations")
-def get_conversations(
-    user: AuthenticatedUser = Depends(get_current_user),
+async def get_conversations(
+    user: AuthenticatedUser = Depends(get_startup_user),
 ):
-    if not is_supabase_connected():
-        return {
-            "error": "Supabase is not connected. Check the backend environment."
-        }
-
-    return {"conversations": get_all_conversations(user.id)}
+    return {"conversations": await list_startup_conversations(user.id)}
 
 
 @router.get("/api/conversations/{conversation_id}")
@@ -45,10 +41,7 @@ def remove_conversation(
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     if not is_supabase_connected():
-        return {
-            "success": False,
-            "error": "Supabase is not connected. Check the backend environment.",
-        }
+        raise PersistenceUnavailable()
 
     delete_conversation(conversation_id, user.id)
 
