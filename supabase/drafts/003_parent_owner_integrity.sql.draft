@@ -1,42 +1,79 @@
--- DRAFT 003: DESIGN ONLY. No executable guessed constraint/index/trigger DDL.
--- This is outside the active migration directory and always fails closed.
-BEGIN;
-DO $blocked$
+-- Reviewed staging candidate: no data repair, ownership inference or backfill.
+-- Original four FKs remain CASCADE / NO ACTION / NOT DEFERRABLE unchanged.
+-- Execution acknowledgement, NOT independent project-identity proof.
+-- The runner must verify the DSN, TLS and staging API before setting this GUC.
+DO $target$
+DECLARE target text := current_setting('philomath.batch4_target', true);
 BEGIN
-    RAISE EXCEPTION 'Philomath draft 003 is blocked: complete canonical constraint, index and trigger definitions required';
+    IF current_user <> 'postgres' THEN
+        RAISE EXCEPTION 'Batch 4 requires the reviewed administrative role';
+    END IF;
+    IF target = 'offline-local' AND current_database() = 'philomath_batch4_test'
+       AND inet_client_addr() IS NULL THEN
+        RETURN;
+    END IF;
+    IF target IS DISTINCT FROM 'tdiqzmaqvoynspmilwra'
+       OR current_database() <> 'postgres' THEN
+        RAISE EXCEPTION 'Batch 4 target is not explicitly verified staging';
+    END IF;
 END
-$blocked$;
+$target$;
+SET LOCAL lock_timeout = '2s';
+SET LOCAL statement_timeout = '20s';
 
--- Known, user-reported (NOT independently tested) production metadata:
--- conversations.id TEXT; messages.id UUID; messages.conversation_id TEXT.
--- conversations.user_id and messages.user_id nullable; legacy NULL rows exist.
--- Separate user/parent FKs exist; composite ownership constraint not demonstrated.
--- Integration UNIQUE(user_id, provider) exists; retain it for Batch 3 upserts.
---
--- Intended invariant for future app-owned records:
--- messages(conversation_id, user_id) must reference the same owner's parent.
--- A composite FK requires a suitable existing or explicitly reviewed unique
--- parent key (id, user_id). Do not invent a new index, constraint name or drop
--- an existing FK without its full definition and dependencies.
---
--- Required canonical evidence before choosing final DDL:
--- * complete columns/defaults/nullability, PKs/UNIQUE/CHECKs and index definitions;
--- * every relevant FK, MATCH, ON DELETE/UPDATE, deferrability and validation state;
--- * triggers/functions, table ownership, role/grant/policy details and PG version.
---
--- Preserve existing delete/update behavior exactly. A second FK can interact
--- with the old FK's actions; CASCADE, RESTRICT, NO ACTION, SET NULL and SET DEFAULT
--- are not interchangeable. Composite SET NULL may change additional columns.
--- Therefore no ON DELETE/UPDATE rule is specified or changed in this draft.
---
--- Legacy rows stay in place: no ownership guesses, UPDATE, DELETE or backfill.
--- Consider NOT VALID FK/CHECK staging only after reviewing existing constraints.
--- MATCH SIMPLE skips a NULL key component; it alone cannot enforce a non-NULL
--- owner for future writes. A NOT VALID CHECK can block updates of legacy rows;
--- that consequence requires review. UNIQUE and NOT NULL need separate planning.
---
--- Separate HTTP ownership checks cannot replace this invariant or an atomic
--- parent lock/check plus related writes. Future transaction/RPC work requires
--- separate reviewed SQL; no SECURITY DEFINER function is introduced here.
-
-ROLLBACK;
+ALTER TABLE public.conversations ADD CONSTRAINT conversations_id_user_id_key UNIQUE (id,user_id);
+-- The canonical message indexes contain no conversation prefix. This supports
+-- parent checks and cascade lookups without adding a redundant user-only index.
+CREATE INDEX messages_conversation_user_idx ON public.messages(conversation_id,user_id);
+ALTER TABLE public.messages ADD CONSTRAINT messages_parent_owner_fkey
+    FOREIGN KEY (conversation_id,user_id) REFERENCES public.conversations(id,user_id)
+    MATCH SIMPLE ON DELETE CASCADE ON UPDATE NO ACTION NOT DEFERRABLE NOT VALID;
+-- NOT VALID preserves inconsistent legacy rows. MATCH SIMPLE skips NULL keys;
+-- triggers below enforce non-NULL ownership on future writes.
+CREATE FUNCTION public.philomath_guard_conversation() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+BEGIN
+    IF TG_OP='DELETE' THEN
+        IF OLD.user_id IS NULL OR EXISTS (SELECT 1 FROM public.messages AS child
+            WHERE child.conversation_id=OLD.id AND child.user_id IS DISTINCT FROM OLD.user_id) THEN
+            RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Conversation ownership integrity rejected';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF NEW.user_id IS NULL OR (TG_OP='UPDATE' AND NEW.user_id IS DISTINCT FROM OLD.user_id) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Conversation ownership integrity rejected';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER philomath_conversation_ownership
+    BEFORE INSERT OR UPDATE OR DELETE ON public.conversations
+    FOR EACH ROW EXECUTE FUNCTION public.philomath_guard_conversation();
+CREATE FUNCTION public.philomath_guard_message() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+BEGIN
+    IF TG_OP='DELETE' THEN
+        IF OLD.user_id IS NULL THEN
+            RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Message ownership integrity rejected';
+        END IF;
+        RETURN OLD;
+    END IF;
+    IF NEW.user_id IS NULL OR NEW.conversation_id IS NULL
+       OR (TG_OP='UPDATE' AND NEW.user_id IS DISTINCT FROM OLD.user_id) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='Message ownership integrity rejected';
+    END IF;
+    PERFORM 1 FROM public.conversations AS parent
+        WHERE parent.id=NEW.conversation_id AND parent.user_id=NEW.user_id FOR KEY SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='23503', MESSAGE='Message ownership integrity rejected';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER philomath_message_ownership
+    BEFORE INSERT OR UPDATE OR DELETE ON public.messages
+    FOR EACH ROW EXECUTE FUNCTION public.philomath_guard_message();
+REVOKE ALL ON FUNCTION public.philomath_guard_conversation(),public.philomath_guard_message()
+    FROM PUBLIC,anon,authenticated;
+-- Valid cascades continue. Cascades touching legacy NULL/inconsistent children
+-- now fail atomically: stricter outcomes preserve records without rewriting FKs.

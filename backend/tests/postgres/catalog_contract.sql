@@ -1,12 +1,4 @@
--- FUTURE disposable local database test; NEVER executed by tests.run_offline.
--- Requires approved canonical fixture and database-execution approval.
-BEGIN;
-DO $blocked$
-BEGIN
-    RAISE EXCEPTION 'PostgreSQL scaffold blocked: fixture and execution approval required';
-END
-$blocked$;
-
+-- Postconditions; runner supplies guard and transaction.
 -- Effective privileges include PUBLIC and inherited grants. Column privileges
 -- must be checked independently; absence of table grants alone is insufficient.
 DO $contract$
@@ -36,6 +28,17 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public' AND c.relname IN ('conversations', 'messages', 'user_ai_integrations')
         AND NOT c.relrowsecurity) THEN RAISE EXCEPTION 'RLS must remain enabled'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.messages'::regclass
+        AND conname='messages_parent_owner_fkey' AND NOT convalidated
+        AND NOT condeferrable AND confdeltype='c' AND confupdtype='a') THEN
+        RAISE EXCEPTION 'Expected ownership constraint missing';
+    END IF;
+    IF (SELECT count(*) FROM pg_trigger WHERE tgrelid IN
+        ('public.conversations'::regclass,'public.messages'::regclass)
+        AND tgname IN ('philomath_conversation_ownership','philomath_message_ownership')
+        AND tgenabled='O') <> 2 THEN
+        RAISE EXCEPTION 'Ownership trigger missing or disabled';
+    END IF;
 END
 $contract$;
 
@@ -43,4 +46,3 @@ $contract$;
 -- pg_get_triggerdef against the approved fixture: do not guess FK names/actions.
 -- Also inspect pg_policies, default grants, exposed views and security-definer
 -- functions; the table checks above are necessary, not a complete proof.
-ROLLBACK;

@@ -79,23 +79,23 @@ class PostgreSQLScaffoldSafetyTests(unittest.TestCase):
                     postgres_plan.main(["--metadata", str(path)])
                 self.assertEqual(caught.exception.code, 2)
 
-    def test_all_sql_artifacts_fail_before_operations_and_end_in_rollback(self):
+    def test_candidates_require_explicit_verified_target_before_operations(self):
         artifacts = list((ROOT / "supabase/drafts").glob("*.sql.draft"))
-        artifacts += list((ROOT / "backend/tests/postgres").glob("*.sql"))
-        self.assertEqual(len(artifacts), 4)
+        self.assertEqual(len(artifacts), 2)
         for path in artifacts:
             with self.subTest(path=path.name):
                 sql = re.sub(r"--[^\n]*", "", path.read_text()).strip()
-                self.assertTrue(sql.startswith("BEGIN;\nDO $blocked$"))
-                guard_end = sql.index("$blocked$;", sql.index("DO $blocked$") + 1)
+                self.assertTrue(sql.startswith("DO $target$"))
+                guard_end = sql.index("$target$;", sql.index("DO $target$") + 1)
                 self.assertIn("RAISE EXCEPTION", sql[:guard_end])
-                self.assertTrue(sql.endswith("ROLLBACK;"))
+                self.assertIn("tdiqzmaqvoynspmilwra", sql[:guard_end])
+                self.assertIn("current_database() = 'philomath_batch4_test'", sql[:guard_end])
                 self.assertNotRegex(sql, r"\bCOMMIT\b")
 
-    def test_drafts_are_outside_active_migrations_and_do_not_guess_delete_actions(self):
+    def test_candidates_preserve_original_fks_and_legacy_records(self):
         self.assertEqual([p.name for p in (ROOT / "supabase/migrations").glob("*.sql")], ["001_google_auth_byok.sql"])
         draft = ROOT / "supabase/drafts/003_parent_owner_integrity.sql.draft"
         sql = re.sub(r"--[^\n]*", "", draft.read_text())
-        self.assertNotRegex(sql, r"\b(?:ALTER|CREATE|UPDATE|DELETE|INSERT)\b")
-        self.assertNotIn("ON DELETE", sql)
-        self.assertNotIn("ON UPDATE", sql)
+        self.assertNotRegex(sql, r"\bDROP\b|\b(?:UPDATE|DELETE FROM|INSERT INTO)\s+public\.")
+        self.assertIn("ON DELETE CASCADE ON UPDATE NO ACTION NOT DEFERRABLE NOT VALID", sql)
+        self.assertNotIn("SET NOT NULL", sql)

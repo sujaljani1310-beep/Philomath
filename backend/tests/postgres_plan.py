@@ -26,10 +26,10 @@ def build_plan(metadata=None):
         "status": "BLOCKED" if missing else "REVIEW_REQUIRED",
         "missing_evidence": missing,
         "schema_verified": False,
-        "required_target": "Separately approved disposable local PostgreSQL/Supabase fixture; never production",
+        "required_target": "Disposable offline fixture or verified staging tdiqzmaqvoynspmilwra; never production",
         "sql_scaffolds": ["postgres/catalog_contract.sql", "postgres/two_user_permissions.sql"],
         "requires": [
-            "Explicit database execution approval (not currently granted)",
+            "Scoped offline/staging execution is approved; this historical planner still cannot execute",
             "Human verification of canonical DDL, grants and delete semantics",
             "Synthetic Auth UUIDs A/B provisioned in the disposable fixture",
             "Reviewed baseline/hardened fixture loading and cleanup procedure",

@@ -237,10 +237,12 @@ class MiddlewareTests(unittest.IsolatedAsyncioTestCase):
     async def test_cleanup_exhausting_deadline_aborts_without_headers_and_recovers(self):
         clock = [100.0]
         cancelled = asyncio.Event()
+        entered = asyncio.Event()
         slow = True
         async def app(scope, receive, send):
             if slow:
                 try:
+                    entered.set()
                     await asyncio.Future()
                 finally:
                     # Deterministically model cleanup/scheduler delay beyond the
@@ -251,10 +253,17 @@ class MiddlewareTests(unittest.IsolatedAsyncioTestCase):
         sent = []
         async def record(message):
             sent.append(message)
-        middleware = self.middleware(app, startup_deadline=0.02)
+        # Unit-test this cleanup branch directly: ingress spool scheduling is
+        # covered by separate integrated tests and must not consume this budget.
+        middleware = limits.RequestLimitsMiddleware(app,
+            controller=limits.AdmissionController(policies=policies()), startup_deadline=0.2)
+        async def expire_after_app_enters(tasks, **kwargs):
+            await entered.wait()
+            return set(), set(tasks)
         with patch.object(limits, "monotonic", side_effect=lambda: clock[0]):
-            with self.assertRaisesRegex(TimeoutError, "Error response delivery"):
-                await asyncio.wait_for(invoke(middleware, on_send=record), 1)
+            with patch.object(limits.asyncio, "wait", side_effect=expire_after_app_enters):
+                with self.assertRaisesRegex(TimeoutError, "Error response delivery"):
+                    await asyncio.wait_for(invoke(middleware, on_send=record), 1)
             self.assertEqual(sent, [])
             self.assertTrue(cancelled.is_set())
             self.assertEqual(middleware.controller.active, 0)

@@ -1,34 +1,90 @@
--- DRAFT 002. NOT A MIGRATION. Excluded from supabase/migrations discovery.
--- No database execution is approved. Do not rename, remove the guard or commit
--- a runnable version until canonical policies/grants/functions are reviewed.
-BEGIN;
-DO $blocked$
+-- Reviewed candidate, outside active migration discovery. Runner prepends
+-- target guard + catalog assertions in one transaction. No production use.
+-- Execution acknowledgement, NOT independent project-identity proof.
+-- The runner must verify the DSN, TLS and staging API before setting this GUC.
+DO $target$
+DECLARE target text := current_setting('philomath.batch4_target', true);
 BEGIN
-    RAISE EXCEPTION 'Philomath draft 002 is blocked: canonical metadata and explicit database execution approval required';
+    IF current_user <> 'postgres' THEN
+        RAISE EXCEPTION 'Batch 4 requires the reviewed administrative role';
+    END IF;
+    IF target = 'offline-local' AND current_database() = 'philomath_batch4_test'
+       AND inet_client_addr() IS NULL THEN
+        RETURN;
+    END IF;
+    IF target IS DISTINCT FROM 'tdiqzmaqvoynspmilwra'
+       OR current_database() <> 'postgres' THEN
+        RAISE EXCEPTION 'Batch 4 target is not explicitly verified staging';
+    END IF;
 END
-$blocked$;
+$target$;
+SET LOCAL lock_timeout = '2s';
+SET LOCAL statement_timeout = '20s';
 
--- Proposed permission core, NOT a complete/final security boundary:
+
+-- Table REVOKE does not revoke independent column grants.
+DO $columns$
+DECLARE item record;
+BEGIN
+    FOR item IN SELECT c.relname,a.attname FROM pg_attribute a
+        JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname IN
+        ('conversations','messages','user_ai_integrations')
+        AND a.attnum>0 AND NOT a.attisdropped
+    LOOP
+        EXECUTE format('REVOKE ALL PRIVILEGES (%I) ON TABLE public.%I FROM PUBLIC, anon, authenticated',
+            item.attname,item.relname);
+    END LOOP;
+END
+$columns$;
 REVOKE ALL PRIVILEGES ON TABLE public.conversations, public.messages,
     public.user_ai_integrations FROM PUBLIC, anon, authenticated;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON TABLE public.conversations, public.messages TO authenticated;
+DROP POLICY "philomath conversations insert own" ON public.conversations;
+DROP POLICY "philomath conversations update own" ON public.conversations;
+DROP POLICY "philomath conversations delete own" ON public.conversations;
+DROP POLICY "philomath messages insert own" ON public.messages;
+DROP POLICY "philomath messages delete own" ON public.messages;
+ALTER POLICY "philomath messages select own" ON public.messages
+    USING ((SELECT auth.uid()) = user_id AND EXISTS (
+        SELECT 1 FROM public.conversations AS parent
+        WHERE parent.id=messages.conversation_id
+          AND parent.user_id=(SELECT auth.uid())
+    ));
 
--- REQUIRED BEFORE FINALIZATION:
--- 1. Inventory and explicitly revoke independent column privileges; inspect
---    effective inherited privileges, role attributes and schema privileges.
---    REVOKE at table level alone does not remove column/inherited grants.
--- 2. Review every policy expression, mode, name and role. Remove unsupported
---    browser DML policies; retain authenticated own-row reads. Add mandatory
---    ownership/parent checks where warranted, without assuming unknown policies.
---    Anonymous access stays denied; integration access stays backend-only.
--- 3. Audit exposed views, write RPCs/SECURITY DEFINER functions and their grants:
---    table revocations do not prevent writes through privileged functions.
--- 4. Verify the actual backend role retains required privileges. Do not rewrite
---    Auth schema grants or assume RLS constrains service_role/BYPASSRLS.
--- 5. Assert effective browser DML/TRUNCATE/TRIGGER/REFERENCES and all integration
---    privileges are denied, including column grants; assert own reads still work.
--- 6. No UPDATE/DELETE/backfill of application records belongs in this migration.
---    Keep all legacy NULL-owned records. No FK, trigger or deletion-rule changes.
--- Missing canonical catalog evidence blocks the final policy/privilege SQL.
-
-ROLLBACK; -- Even deliberate guard removal must not accidentally apply a draft.
+-- Unknown inherited privileges cause rollback rather than guessed role changes.
+DO $effective$
+DECLARE r text; t text; p text;
+BEGIN
+    FOREACH r IN ARRAY ARRAY['anon','authenticated'] LOOP
+        FOREACH t IN ARRAY ARRAY['public.conversations','public.messages','public.user_ai_integrations'] LOOP
+            FOREACH p IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'] LOOP
+                IF has_table_privilege(r,t,p) THEN RAISE EXCEPTION 'Inherited table write privilege remains'; END IF;
+            END LOOP;
+            FOREACH p IN ARRAY ARRAY['INSERT','UPDATE','REFERENCES'] LOOP
+                IF has_any_column_privilege(r,t,p) THEN RAISE EXCEPTION 'Inherited column write privilege remains'; END IF;
+            END LOOP;
+        END LOOP;
+        IF has_any_column_privilege(r,'public.user_ai_integrations','SELECT')
+            OR has_schema_privilege(r,'public','CREATE') THEN
+            RAISE EXCEPTION 'Browser integration/schema privilege remains';
+        END IF;
+    END LOOP;
+    IF has_any_column_privilege('anon','public.conversations','SELECT')
+        OR has_any_column_privilege('anon','public.messages','SELECT') THEN
+        RAISE EXCEPTION 'Anonymous private-table read privilege remains';
+    END IF;
+    IF NOT has_schema_privilege('service_role','public','USAGE')
+       OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role' AND rolbypassrls) THEN
+        RAISE EXCEPTION 'Unexpected backend role capabilities';
+    END IF;
+    FOREACH t IN ARRAY ARRAY['public.conversations','public.messages','public.user_ai_integrations'] LOOP
+        FOREACH p IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE'] LOOP
+            IF NOT has_table_privilege('service_role',t,p) THEN
+                RAISE EXCEPTION 'Backend table privilege missing';
+            END IF;
+        END LOOP;
+    END LOOP;
+END
+$effective$;

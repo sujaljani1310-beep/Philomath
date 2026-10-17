@@ -1,0 +1,4 @@
+# Optional verification tools only; never added to backend runtime dependencies.
+psycopg==3.2.10
+psycopg-binary==3.2.10
+typing_extensions==4.16.0

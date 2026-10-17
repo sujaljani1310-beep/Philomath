@@ -1,49 +1,55 @@
--- FUTURE psql scaffold. Requires canonical fixture with synthetic Auth users,
--- variables user_a/user_b containing their UUIDs, and a privileged setup role.
--- Not executed, loaded or connected by the offline Python test suite.
-BEGIN;
-DO $blocked$
+-- Invoked by hosted.py inside a guarded, force-rollback transaction. The IDs
+-- belong only to confirmed synthetic users/fixtures created by that invocation.
+DO $two_users$
+DECLARE
+    users uuid[] := ARRAY[current_setting('philomath.batch4_user_a')::uuid,
+                          current_setting('philomath.batch4_user_b')::uuid];
+    parents text[] := ARRAY[current_setting('philomath.batch4_parent_a'),
+                            current_setting('philomath.batch4_parent_b')];
+    i integer; denied boolean; command text; role_name text; table_name text;
 BEGIN
-    RAISE EXCEPTION 'Two-user scaffold blocked: canonical fixture and execution approval required';
+    FOR i IN 1..2 LOOP
+        PERFORM set_config('request.jwt.claim.sub',users[i]::text,true);
+        PERFORM set_config('request.jwt.claims',json_build_object('sub',users[i],'role','authenticated')::text,true);
+        SET LOCAL ROLE authenticated;
+        IF (SELECT count(*) FROM public.conversations WHERE id=parents[i])<>1
+           OR EXISTS (SELECT 1 FROM public.conversations WHERE id=parents[3-i])
+           OR (SELECT count(*) FROM public.messages WHERE conversation_id=parents[i])<>1
+           OR EXISTS (SELECT 1 FROM public.messages WHERE conversation_id=parents[3-i]) THEN
+            RAISE EXCEPTION 'Direct SQL two-user isolation failed';
+        END IF;
+        FOREACH command IN ARRAY ARRAY[
+            format('UPDATE public.conversations SET title=%L WHERE id=%L','forbidden',parents[i]),
+            format('DELETE FROM public.conversations WHERE id=%L',parents[i]),
+            'INSERT INTO public.conversations DEFAULT VALUES',
+            format('UPDATE public.messages SET content=%L WHERE conversation_id=%L','forbidden',parents[i]),
+            format('DELETE FROM public.messages WHERE conversation_id=%L',parents[i]),
+            'INSERT INTO public.messages DEFAULT VALUES',
+            'SELECT id FROM public.user_ai_integrations LIMIT 0'] LOOP
+            denied:=false;
+            BEGIN EXECUTE command;
+            EXCEPTION WHEN insufficient_privilege THEN denied:=true; END;
+            IF NOT denied THEN RAISE EXCEPTION 'Direct SQL browser operation unexpectedly allowed'; END IF;
+        END LOOP;
+        RESET ROLE;
+    END LOOP;
+    SET LOCAL ROLE anon;
+    FOREACH table_name IN ARRAY ARRAY['conversations','messages','user_ai_integrations'] LOOP
+        denied:=false;
+        BEGIN EXECUTE format('SELECT id FROM public.%I LIMIT 0',table_name);
+        EXCEPTION WHEN insufficient_privilege THEN denied:=true; END;
+        IF NOT denied THEN RAISE EXCEPTION 'Anonymous SQL read unexpectedly allowed'; END IF;
+    END LOOP;
+    RESET ROLE;
+    -- Check dangerous grants without executing a destructive TRUNCATE.
+    FOREACH role_name IN ARRAY ARRAY['anon','authenticated'] LOOP
+        FOREACH table_name IN ARRAY ARRAY['public.conversations','public.messages','public.user_ai_integrations'] LOOP
+            IF has_table_privilege(role_name,table_name,'TRUNCATE')
+               OR has_table_privilege(role_name,table_name,'TRIGGER')
+               OR has_table_privilege(role_name,table_name,'REFERENCES') THEN
+                RAISE EXCEPTION 'Dangerous browser privilege remains';
+            END IF;
+        END LOOP;
+    END LOOP;
 END
-$blocked$;
-
--- Columns/defaults/extra NOT NULL fields must be checked before finalizing these
--- fixture inserts. They are a test recipe, not a reconstruction of missing DDL.
-INSERT INTO public.conversations (id, user_id, title, mode) VALUES
-    ('philomath_fixture_A', :'user_a'::uuid, 'Synthetic A', 'basic'),
-    ('philomath_fixture_B', :'user_b'::uuid, 'Synthetic B', 'basic');
-INSERT INTO public.messages (id, conversation_id, user_id, role, content) VALUES
-    ('11111111-1111-4111-8111-111111111111', 'philomath_fixture_A', :'user_a'::uuid, 'user', 'Synthetic A'),
-    ('22222222-2222-4222-8222-222222222222', 'philomath_fixture_B', :'user_b'::uuid, 'user', 'Synthetic B');
-
-SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub', :'user_a', true);
-SELECT set_config('request.jwt.claims', json_build_object('sub', :'user_a', 'role', 'authenticated')::text, true);
-DO $isolation$
-DECLARE denied boolean;
-BEGIN
-    IF (SELECT count(*) FROM public.conversations WHERE id = 'philomath_fixture_A') <> 1
-       OR EXISTS (SELECT 1 FROM public.conversations WHERE id = 'philomath_fixture_B')
-       OR EXISTS (SELECT 1 FROM public.messages WHERE conversation_id = 'philomath_fixture_B') THEN
-        RAISE EXCEPTION 'Two-user read isolation failed';
-    END IF;
-    denied := false;
-    BEGIN UPDATE public.conversations SET title = 'forbidden' WHERE id = 'philomath_fixture_A';
-    EXCEPTION WHEN insufficient_privilege THEN denied := true; END;
-    IF NOT denied THEN RAISE EXCEPTION 'Direct own-row UPDATE was not denied'; END IF;
-    denied := false;
-    BEGIN DELETE FROM public.messages WHERE conversation_id = 'philomath_fixture_A';
-    EXCEPTION WHEN insufficient_privilege THEN denied := true; END;
-    IF NOT denied THEN RAISE EXCEPTION 'Direct own-row DELETE was not denied'; END IF;
-    denied := false;
-    BEGIN PERFORM 1 FROM public.user_ai_integrations LIMIT 1;
-    EXCEPTION WHEN insufficient_privilege THEN denied := true; END;
-    IF NOT denied THEN RAISE EXCEPTION 'Browser integration read was not denied'; END IF;
-END
-$isolation$;
-RESET ROLE;
--- Complete the symmetric B, anon, direct INSERT and privileged negative-owner
--- cases only after fixture metadata is reviewed. Verify row postconditions as
--- well as denial status. Use separate sessions for genuine concurrency tests.
-ROLLBACK;
+$two_users$;

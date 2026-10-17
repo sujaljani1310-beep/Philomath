@@ -1,0 +1,690 @@
+{
+  "source": "User-supplied sanitized production metadata; no production connection or records",
+  "unknown": [
+    "PUBLIC/column/inherited/default ACLs",
+    "role attributes and memberships",
+    "schema ACLs",
+    "exposed views and privileged RPCs",
+    "FORCE RLS flags",
+    "index validity",
+    "PostgreSQL version",
+    "function owner/EXECUTE grants",
+    "custom Auth hooks/triggers and database event triggers"
+  ],
+  "exports": {
+    "Supabase Snippet Untitled query.csv": {
+      "sha256": "7c9d9eff6c4c285759098412e6315554be670e440351db15c0d2a9cd1368005a",
+      "rows": [
+        {
+          "table_name": "conversations",
+          "object_type": "COLUMN",
+          "object_name": "created_at",
+          "definition": "created_at timestamp with time zone DEFAULT now()"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "COLUMN",
+          "object_name": "id",
+          "definition": "id text NOT NULL"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "COLUMN",
+          "object_name": "mode",
+          "definition": "mode text DEFAULT 'basic'::text"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "COLUMN",
+          "object_name": "title",
+          "definition": "title text"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "COLUMN",
+          "object_name": "updated_at",
+          "definition": "updated_at timestamp with time zone DEFAULT now()"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "COLUMN",
+          "object_name": "user_id",
+          "definition": "user_id uuid"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "INDEX",
+          "object_name": "conversations_pkey",
+          "definition": "CREATE UNIQUE INDEX conversations_pkey ON public.conversations USING btree (id)"
+        },
+        {
+          "table_name": "conversations",
+          "object_type": "INDEX",
+          "object_name": "conversations_user_id_idx",
+          "definition": "CREATE INDEX conversations_user_id_idx ON public.conversations USING btree (user_id)"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "content",
+          "definition": "content text NOT NULL"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "conversation_id",
+          "definition": "conversation_id text"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "created_at",
+          "definition": "created_at timestamp with time zone DEFAULT now()"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "id",
+          "definition": "id uuid NOT NULL DEFAULT gen_random_uuid()"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "model_used",
+          "definition": "model_used text"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "provider_used",
+          "definition": "provider_used text"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "role",
+          "definition": "role text NOT NULL"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "COLUMN",
+          "object_name": "user_id",
+          "definition": "user_id uuid"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "INDEX",
+          "object_name": "messages_pkey",
+          "definition": "CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (id)"
+        },
+        {
+          "table_name": "messages",
+          "object_type": "INDEX",
+          "object_name": "messages_user_id_idx",
+          "definition": "CREATE INDEX messages_user_id_idx ON public.messages USING btree (user_id)"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "api_key_last4",
+          "definition": "api_key_last4 text NOT NULL"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "created_at",
+          "definition": "created_at timestamp with time zone NOT NULL DEFAULT now()"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "display_name",
+          "definition": "display_name text NOT NULL"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "encrypted_api_key",
+          "definition": "encrypted_api_key text NOT NULL"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "id",
+          "definition": "id uuid NOT NULL DEFAULT gen_random_uuid()"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "provider",
+          "definition": "provider text NOT NULL"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "updated_at",
+          "definition": "updated_at timestamp with time zone NOT NULL DEFAULT now()"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "COLUMN",
+          "object_name": "user_id",
+          "definition": "user_id uuid NOT NULL"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "INDEX",
+          "object_name": "user_ai_integrations_pkey",
+          "definition": "CREATE UNIQUE INDEX user_ai_integrations_pkey ON public.user_ai_integrations USING btree (id)"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "INDEX",
+          "object_name": "user_ai_integrations_user_id_idx",
+          "definition": "CREATE INDEX user_ai_integrations_user_id_idx ON public.user_ai_integrations USING btree (user_id)"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "INDEX",
+          "object_name": "user_ai_integrations_user_provider_key",
+          "definition": "CREATE UNIQUE INDEX user_ai_integrations_user_provider_key ON public.user_ai_integrations USING btree (user_id, provider)"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "object_type": "TRIGGER",
+          "object_name": "user_ai_integrations_set_updated_at",
+          "definition": "CREATE TRIGGER user_ai_integrations_set_updated_at BEFORE UPDATE ON public.user_ai_integrations FOR EACH ROW EXECUTE FUNCTION set_philomath_updated_at()"
+        }
+      ]
+    },
+    "2.csv": {
+      "sha256": "1884632a3a777b3c7edc569acd841de3f5bb9d3945967ce0d4f3d46fcd373b63",
+      "rows": [
+        {
+          "function_name": "set_philomath_updated_at",
+          "definition": "CREATE OR REPLACE FUNCTION public.set_philomath_updated_at()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\nbegin\n    new.updated_at = now();\n    return new;\nend;\n$function$\n"
+        }
+      ]
+    },
+    "3.csv": {
+      "sha256": "9cb0b6286538105b7a0ddb370c9cf70be3e99d2111c1d74969d4bfca494a7d99",
+      "rows": [
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "anon",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "authenticated",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "postgres",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "conversations",
+          "grantee": "service_role",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "anon",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "authenticated",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "postgres",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "messages",
+          "grantee": "service_role",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "postgres",
+          "privilege_type": "UPDATE"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "DELETE"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "INSERT"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "REFERENCES"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "SELECT"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "TRIGGER"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "TRUNCATE"
+        },
+        {
+          "table_name": "user_ai_integrations",
+          "grantee": "service_role",
+          "privilege_type": "UPDATE"
+        }
+      ]
+    },
+    "4.csv": {
+      "sha256": "1514b5ef4f32cbf3679b294accdcd9eaed01c2a6538c48f9d45caade9f585799",
+      "rows": [
+        {
+          "category": "CONSTRAINT",
+          "object_table": "conversations",
+          "object_name": "conversations_pkey",
+          "definition": "PRIMARY KEY (id) | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "conversations",
+          "object_name": "conversations_user_id_fkey",
+          "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "messages",
+          "object_name": "messages_conversation_id_fkey",
+          "definition": "FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "messages",
+          "object_name": "messages_pkey",
+          "definition": "PRIMARY KEY (id) | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "messages",
+          "object_name": "messages_user_id_fkey",
+          "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "user_ai_integrations",
+          "object_name": "user_ai_integrations_pkey",
+          "definition": "PRIMARY KEY (id) | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "user_ai_integrations",
+          "object_name": "user_ai_integrations_provider_check",
+          "definition": "CHECK ((provider = ANY (ARRAY['openrouter'::text, 'cerebras'::text, 'nvidia'::text, 'gemini'::text, 'grok'::text]))) | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "user_ai_integrations",
+          "object_name": "user_ai_integrations_user_id_fkey",
+          "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "CONSTRAINT",
+          "object_table": "user_ai_integrations",
+          "object_name": "user_ai_integrations_user_provider_key",
+          "definition": "UNIQUE (user_id, provider) | validated=true | deferrable=false | initially_deferred=false"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "conversations",
+          "object_name": "philomath conversations delete own",
+          "definition": "command=DELETE | roles={authenticated} | permissive=PERMISSIVE | using=(( SELECT auth.uid() AS uid) = user_id) | with_check=NULL"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "conversations",
+          "object_name": "philomath conversations insert own",
+          "definition": "command=INSERT | roles={authenticated} | permissive=PERMISSIVE | using=NULL | with_check=(( SELECT auth.uid() AS uid) = user_id)"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "conversations",
+          "object_name": "philomath conversations select own",
+          "definition": "command=SELECT | roles={authenticated} | permissive=PERMISSIVE | using=(( SELECT auth.uid() AS uid) = user_id) | with_check=NULL"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "conversations",
+          "object_name": "philomath conversations update own",
+          "definition": "command=UPDATE | roles={authenticated} | permissive=PERMISSIVE | using=(( SELECT auth.uid() AS uid) = user_id) | with_check=(( SELECT auth.uid() AS uid) = user_id)"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "messages",
+          "object_name": "philomath messages delete own",
+          "definition": "command=DELETE | roles={authenticated} | permissive=PERMISSIVE | using=(( SELECT auth.uid() AS uid) = user_id) | with_check=NULL"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "messages",
+          "object_name": "philomath messages insert own",
+          "definition": "command=INSERT | roles={authenticated} | permissive=PERMISSIVE | using=NULL | with_check=(( SELECT auth.uid() AS uid) = user_id)"
+        },
+        {
+          "category": "RLS_POLICY",
+          "object_table": "messages",
+          "object_name": "philomath messages select own",
+          "definition": "command=SELECT | roles={authenticated} | permissive=PERMISSIVE | using=(( SELECT auth.uid() AS uid) = user_id) | with_check=NULL"
+        },
+        {
+          "category": "TABLE_OWNER",
+          "object_table": "conversations",
+          "object_name": "owner",
+          "definition": "postgres"
+        },
+        {
+          "category": "TABLE_OWNER",
+          "object_table": "messages",
+          "object_name": "owner",
+          "definition": "postgres"
+        },
+        {
+          "category": "TABLE_OWNER",
+          "object_table": "user_ai_integrations",
+          "object_name": "owner",
+          "definition": "postgres"
+        },
+        {
+          "category": "TRIGGER_STATE",
+          "object_table": "user_ai_integrations",
+          "object_name": "user_ai_integrations_set_updated_at",
+          "definition": "enabled=O"
+        }
+      ]
+    }
+  }
+}
