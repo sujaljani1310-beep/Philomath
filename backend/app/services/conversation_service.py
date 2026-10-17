@@ -43,6 +43,28 @@ def _owned_conversation_exists(result, conversation_id: str) -> bool:
     return True
 
 
+def _has_owned_parent(client, conversation_id: str, user_id: str) -> bool:
+    result = (
+        client.table("conversations").select("id")
+        .eq("id", conversation_id).eq("user_id", user_id).limit(1).retry(False).execute()
+    )
+    return _owned_conversation_exists(result, conversation_id)
+
+
+def _require_owned_parent(client, conversation_id: str, user_id: str) -> None:
+    if not _has_owned_parent(client, conversation_id, user_id):
+        _invalidate_history(conversation_id, user_id)
+        raise PersistenceUnavailable()
+
+
+def _count_message_rows(client, conversation_id: str, user_id: str | None) -> int:
+    query = client.table("messages").select("id", count="exact", head=True)
+    query = query.eq("conversation_id", conversation_id)
+    if user_id is not None:
+        query = query.eq("user_id", user_id)
+    return affected_rows(query.retry(False).execute())
+
+
 @timed("db.conversation.ensure")
 def ensure_conversation_exists(
     conversation_id: str,
@@ -106,6 +128,9 @@ def save_message(
                 }, returning="minimal", count="exact").retry(False).execute()
             )
             affected_rows(result, expected=1)
+            # Detect a changed parent after a potentially committed insert. This
+            # cannot replace a database constraint or roll back an HTTP write.
+            _require_owned_parent(client, conversation_id, user_id)
         finally:
             # A write may have committed even when its response was lost.
             _invalidate_history(conversation_id, user_id)
@@ -118,10 +143,11 @@ def load_recent_messages(
 ) -> List[dict]:
     snapshot = _history_snapshot.get()
     key = (user_id, conversation_id, limit)
-    if snapshot is not None and key in snapshot:
-        return [dict(message) for message in snapshot[key]]
     with database_operation(), timed_operation("db.messages.recent"):
         client = require_supabase()
+        _require_owned_parent(client, conversation_id, user_id)
+        if snapshot is not None and key in snapshot:
+            return [dict(message) for message in snapshot[key]]
         result = (
             client
             .table("messages")
@@ -142,6 +168,7 @@ def load_recent_messages(
         ):
             raise PersistenceUnavailable()
         messages = [dict(row) for row in reversed(rows)]
+        _require_owned_parent(client, conversation_id, user_id)
         if snapshot is not None:
             snapshot[key] = [dict(message) for message in messages]
         return messages
@@ -151,12 +178,10 @@ def load_recent_messages(
 def count_messages(conversation_id: str, user_id: str) -> int:
     with database_operation():
         client = require_supabase()
-        result = (
-            client.table("messages").select("id", count="exact", head=True)
-            .eq("conversation_id", conversation_id).eq("user_id", user_id)
-            .retry(False).execute()
-        )
-        return affected_rows(result)
+        _require_owned_parent(client, conversation_id, user_id)
+        count = _count_message_rows(client, conversation_id, user_id)
+        _require_owned_parent(client, conversation_id, user_id)
+        return count
 
 
 @timed("db.conversations.list")
@@ -176,18 +201,24 @@ def get_all_conversations(user_id: str):
 
 @timed("db.conversation.messages")
 def get_conversation_messages(conversation_id: str, user_id: str):
-    client = require_supabase()
-
-    result = (
-        client
-        .table("messages")
-        .select("*")
-        .eq("conversation_id", conversation_id)
-        .eq("user_id", user_id)
-        .order("created_at")
-        .execute()
-    )
-    return result.data or []
+    with database_operation():
+        client = require_supabase()
+        if not _has_owned_parent(client, conversation_id, user_id):
+            return []
+        result = (
+            client.table("messages").select("*")
+            .eq("conversation_id", conversation_id).eq("user_id", user_id)
+            .order("created_at").execute()
+        )
+        rows = result.data
+        if not isinstance(rows, list) or any(
+            not isinstance(row, dict) or row.get("user_id") != user_id
+            or row.get("conversation_id") != conversation_id
+            for row in rows
+        ):
+            raise PersistenceUnavailable()
+        _require_owned_parent(client, conversation_id, user_id)
+        return rows
 
 
 @timed("db.conversation.delete")
@@ -195,12 +226,27 @@ def delete_conversation(conversation_id: str, user_id: str):
     with mutation_guard("conversation", (user_id, conversation_id)), database_operation():
         client = require_supabase()
         try:
+            if not _has_owned_parent(client, conversation_id, user_id):
+                # Keep idempotent absence, but never delete rows attached to a
+                # foreign/missing/NULL-owned parent to manufacture that result.
+                if _count_message_rows(client, conversation_id, user_id) != 0:
+                    raise PersistenceUnavailable()
+                return
+            # Only metadata is read across child owners, after checking the
+            # caller's parent. Reject legacy NULL/foreign children unchanged.
+            total = _count_message_rows(client, conversation_id, None)
+            owned = _count_message_rows(client, conversation_id, user_id)
+            if total != owned:
+                raise PersistenceUnavailable()
             result = (
                 client.table("messages").delete(returning="minimal", count="exact")
                 .eq("conversation_id", conversation_id).eq("user_id", user_id)
                 .retry(False).execute()
             )
             affected_rows(result)
+            if _count_message_rows(client, conversation_id, None) != 0:
+                raise PersistenceUnavailable()
+            _require_owned_parent(client, conversation_id, user_id)
             result = (
                 client.table("conversations").delete(returning="minimal", count="exact")
                 .eq("id", conversation_id).eq("user_id", user_id)
@@ -216,7 +262,7 @@ def delete_conversation(conversation_id: str, user_id: str):
                 .retry(False).execute()
             )
             affected_rows(result, expected=0)
-            if count_messages(conversation_id, user_id) != 0:
+            if _count_message_rows(client, conversation_id, user_id) != 0:
                 raise PersistenceUnavailable()
         finally:
             _invalidate_history(conversation_id, user_id)

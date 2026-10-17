@@ -308,9 +308,20 @@ class ChatRoutingContractsTests(unittest.TestCase):
 class RequestHistoryIntegrationTests(unittest.TestCase):
     def test_send_chat_reuses_history_across_fallbacks_and_resets_between_requests(self):
         query = MagicMock()
-        for operation in ("table", "select", "eq", "order", "limit"):
+        for operation in ("table", "select", "eq", "order", "limit", "retry"):
             getattr(query, operation).return_value = query
-        query.execute.return_value = SimpleNamespace(data=[{"role": "user", "content": "Earlier question"}])
+        projection = [None]
+        history_reads = []
+        def select(columns):
+            projection[0] = columns
+            return query
+        def execute():
+            if projection[0] == "id":
+                return SimpleNamespace(data=[{"id": CONVERSATION_ID}])
+            history_reads.append(True)
+            return SimpleNamespace(data=[{"role": "user", "content": "Earlier question"}])
+        query.select.side_effect = select
+        query.execute.side_effect = execute
         seen_history = []
         attempts = []
 
@@ -339,9 +350,9 @@ class RequestHistoryIntegrationTests(unittest.TestCase):
         ):
             request = ChatRequest(message="Explain this example.", conversation_id=CONVERSATION_ID)
             first = chat.send_chat(request, AuthenticatedUser(id=USER_ID))
-            self.assertEqual(query.execute.call_count, 1)
+            self.assertEqual(len(history_reads), 1)
             second = chat.send_chat(request, AuthenticatedUser(id=USER_ID))
-            self.assertEqual(query.execute.call_count, 2)
+            self.assertEqual(len(history_reads), 2)
 
         self.assertEqual(attempts, ["openrouter", "gemini", "openrouter", "gemini"])
         self.assertEqual(first["answer"], STRONG_ANSWER)

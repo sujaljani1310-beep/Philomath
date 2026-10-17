@@ -36,9 +36,13 @@ class DatabaseServiceTests(unittest.TestCase):
             self.addCleanup(active.stop)
 
     def test_count_uses_head_and_exact_count_without_rows(self):
-        self.responses = [httpx.Response(200, headers={"content-range": "0-99/100"})]
+        self.responses = [
+            httpx.Response(200, json=[{"id": "chat"}]),
+            httpx.Response(200, headers={"content-range": "0-99/100"}),
+            httpx.Response(200, json=[{"id": "chat"}]),
+        ]
         self.assertEqual(conversations.count_messages("chat", "owner"), 100)
-        request = self.requests[0]
+        request = self.requests[1]
         self.assertEqual(request.method, "HEAD")
         self.assertIn("count=exact", request.headers["prefer"])
         self.assertEqual(request.url.params["user_id"], "eq.owner")
@@ -66,10 +70,12 @@ class DatabaseServiceTests(unittest.TestCase):
         self.responses = [
             httpx.Response(200, json=[{"id": "chat"}]),
             httpx.Response(201, headers={"content-range": "*/1"}),
+            httpx.Response(200, json=[{"id": "chat"}]),
         ]
         conversations.save_message("chat", "owner", "user", "Hello")
-        self.assertEqual(len(self.requests), 2)
-        check, write = self.requests
+        self.assertEqual(len(self.requests), 3)
+        check, write, confirmation = self.requests
+        self.assertEqual(confirmation.url.params["user_id"], "eq.owner")
         self.assertEqual(check.url.params["user_id"], "eq.owner")
         self.assertEqual(check.url.params["id"], "eq.chat")
         self.assertEqual(write.method, "POST")
@@ -95,6 +101,11 @@ class HistorySnapshotTests(unittest.TestCase):
         active = patch.object(conversations, "require_supabase", return_value=self.query)
         active.start()
         self.addCleanup(active.stop)
+        # These tests isolate snapshot behavior. Real-SDK parent checks and
+        # concurrent ownership changes are covered in test_parent_ownership.
+        guard = patch.object(conversations, "_require_owned_parent")
+        guard.start()
+        self.addCleanup(guard.stop)
 
     def test_five_fallbacks_share_one_read_and_do_not_share_mutable_results(self):
         with conversations.conversation_history_snapshot():

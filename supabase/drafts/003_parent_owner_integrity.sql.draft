@@ -1,0 +1,42 @@
+-- DRAFT 003: DESIGN ONLY. No executable guessed constraint/index/trigger DDL.
+-- This is outside the active migration directory and always fails closed.
+BEGIN;
+DO $blocked$
+BEGIN
+    RAISE EXCEPTION 'Philomath draft 003 is blocked: complete canonical constraint, index and trigger definitions required';
+END
+$blocked$;
+
+-- Known, user-reported (NOT independently tested) production metadata:
+-- conversations.id TEXT; messages.id UUID; messages.conversation_id TEXT.
+-- conversations.user_id and messages.user_id nullable; legacy NULL rows exist.
+-- Separate user/parent FKs exist; composite ownership constraint not demonstrated.
+-- Integration UNIQUE(user_id, provider) exists; retain it for Batch 3 upserts.
+--
+-- Intended invariant for future app-owned records:
+-- messages(conversation_id, user_id) must reference the same owner's parent.
+-- A composite FK requires a suitable existing or explicitly reviewed unique
+-- parent key (id, user_id). Do not invent a new index, constraint name or drop
+-- an existing FK without its full definition and dependencies.
+--
+-- Required canonical evidence before choosing final DDL:
+-- * complete columns/defaults/nullability, PKs/UNIQUE/CHECKs and index definitions;
+-- * every relevant FK, MATCH, ON DELETE/UPDATE, deferrability and validation state;
+-- * triggers/functions, table ownership, role/grant/policy details and PG version.
+--
+-- Preserve existing delete/update behavior exactly. A second FK can interact
+-- with the old FK's actions; CASCADE, RESTRICT, NO ACTION, SET NULL and SET DEFAULT
+-- are not interchangeable. Composite SET NULL may change additional columns.
+-- Therefore no ON DELETE/UPDATE rule is specified or changed in this draft.
+--
+-- Legacy rows stay in place: no ownership guesses, UPDATE, DELETE or backfill.
+-- Consider NOT VALID FK/CHECK staging only after reviewing existing constraints.
+-- MATCH SIMPLE skips a NULL key component; it alone cannot enforce a non-NULL
+-- owner for future writes. A NOT VALID CHECK can block updates of legacy rows;
+-- that consequence requires review. UNIQUE and NOT NULL need separate planning.
+--
+-- Separate HTTP ownership checks cannot replace this invariant or an atomic
+-- parent lock/check plus related writes. Future transaction/RPC work requires
+-- separate reviewed SQL; no SECURITY DEFINER function is introduced here.
+
+ROLLBACK;

@@ -1,5 +1,22 @@
 # Backend performance changes for review
 
+## Batch 4: backend safeguards and blocked database drafts
+
+Current partial Batch 4 work is documented in [BATCH4.md](BATCH4.md). Parent-owner
+checks and metadata-only delete safeguards are implemented and covered by 290
+offline tests. They add database round trips and do not establish an atomic
+parent-owner invariant. Startup list endpoints and provider behavior are intact.
+The timing-test change separates blocked delivery from an already exhausted
+cleanup budget; production deadlines are unchanged.
+
+No database was connected or executed. PostgreSQL recipes are blocked scaffolds;
+versioned drafts live outside active migrations and fail closed. Browser write
+revocation, final constraints and deletion safety remain blocked on canonical
+DDL and real database verification. Overall production status remains NEEDS
+FIXES; the historical Batch 1–3 verdicts below do not certify Batch 4 database
+security. No frontend, active migration, provider, dependency or deployment
+configuration changes were made in this batch.
+
 ## Approved Batch 3: persistence correctness
 
 Batch 3 is now implemented and documented in [PERSISTENCE.md](PERSISTENCE.md),

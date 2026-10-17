@@ -222,12 +222,46 @@ class MiddlewareTests(unittest.IsolatedAsyncioTestCase):
                         finally:
                             stopped.set()
                 middleware = self.middleware(app, startup_deadline=0.05)
-                with self.assertRaisesRegex(TimeoutError, "Error response delivery"):
-                    await asyncio.wait_for(invoke(middleware, on_send=slow_send), 1)
+                # Isolate blocked error transmission from expiry during ingress
+                # cleanup. The old real 5ms reserve sometimes expired before
+                # a delivery task could even be created; that case legitimately
+                # sends no headers and is covered separately below.
+                with patch.object(limits, "remaining_startup_seconds", return_value=0.05):
+                    with self.assertRaisesRegex(TimeoutError, "Error response delivery"):
+                        await asyncio.wait_for(invoke(middleware, on_send=slow_send), 1)
                 self.assertEqual(statuses, [504])
                 self.assertTrue(stopped.is_set())
                 self.assertEqual(middleware.controller.active, 0)
                 self.assertFalse(middleware.inflight)
+
+    async def test_cleanup_exhausting_deadline_aborts_without_headers_and_recovers(self):
+        clock = [100.0]
+        cancelled = asyncio.Event()
+        slow = True
+        async def app(scope, receive, send):
+            if slow:
+                try:
+                    await asyncio.Future()
+                finally:
+                    # Deterministically model cleanup/scheduler delay beyond the
+                    # remaining reserve without a fragile real-time sleep.
+                    clock[0] += 1
+                    cancelled.set()
+            await ok(send)
+        sent = []
+        async def record(message):
+            sent.append(message)
+        middleware = self.middleware(app, startup_deadline=0.02)
+        with patch.object(limits, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaisesRegex(TimeoutError, "Error response delivery"):
+                await asyncio.wait_for(invoke(middleware, on_send=record), 1)
+            self.assertEqual(sent, [])
+            self.assertTrue(cancelled.is_set())
+            self.assertEqual(middleware.controller.active, 0)
+            self.assertFalse(middleware.inflight)
+            self.assertIsNone(limits._request_state.get())
+            slow = False
+            self.assertEqual((await invoke(middleware))[0]["status"], 200)
 
     async def test_caught_http_error_delivery_is_bounded(self):
         async def app(scope, receive, send):

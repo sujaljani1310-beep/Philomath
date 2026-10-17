@@ -1,0 +1,34 @@
+-- DRAFT 002. NOT A MIGRATION. Excluded from supabase/migrations discovery.
+-- No database execution is approved. Do not rename, remove the guard or commit
+-- a runnable version until canonical policies/grants/functions are reviewed.
+BEGIN;
+DO $blocked$
+BEGIN
+    RAISE EXCEPTION 'Philomath draft 002 is blocked: canonical metadata and explicit database execution approval required';
+END
+$blocked$;
+
+-- Proposed permission core, NOT a complete/final security boundary:
+REVOKE ALL PRIVILEGES ON TABLE public.conversations, public.messages,
+    public.user_ai_integrations FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON TABLE public.conversations, public.messages TO authenticated;
+
+-- REQUIRED BEFORE FINALIZATION:
+-- 1. Inventory and explicitly revoke independent column privileges; inspect
+--    effective inherited privileges, role attributes and schema privileges.
+--    REVOKE at table level alone does not remove column/inherited grants.
+-- 2. Review every policy expression, mode, name and role. Remove unsupported
+--    browser DML policies; retain authenticated own-row reads. Add mandatory
+--    ownership/parent checks where warranted, without assuming unknown policies.
+--    Anonymous access stays denied; integration access stays backend-only.
+-- 3. Audit exposed views, write RPCs/SECURITY DEFINER functions and their grants:
+--    table revocations do not prevent writes through privileged functions.
+-- 4. Verify the actual backend role retains required privileges. Do not rewrite
+--    Auth schema grants or assume RLS constrains service_role/BYPASSRLS.
+-- 5. Assert effective browser DML/TRUNCATE/TRIGGER/REFERENCES and all integration
+--    privileges are denied, including column grants; assert own reads still work.
+-- 6. No UPDATE/DELETE/backfill of application records belongs in this migration.
+--    Keep all legacy NULL-owned records. No FK, trigger or deletion-rule changes.
+-- Missing canonical catalog evidence blocks the final policy/privilege SQL.
+
+ROLLBACK; -- Even deliberate guard removal must not accidentally apply a draft.

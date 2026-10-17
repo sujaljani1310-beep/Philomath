@@ -172,7 +172,8 @@ class MutationAcknowledgmentTests(unittest.TestCase):
                     self.db.hook = self.lost_response(table, "DELETE", phase)
                     with self.assertRaises(PersistenceUnavailable):
                         conversations.delete_conversation("chat", "owner")
-                    self.assertEqual(len(self.db.requests), 1 if table == "messages" else 2)
+                    self.assertEqual(sum(req.method == "DELETE" for req in self.db.requests), 1 if table == "messages" else 2)
+                    self.assertEqual(self.db.requests[-1].method, "DELETE")
                     self.assertEqual(len(self.db.rows["messages"]), int(table == "messages" and phase == "before"))
                     self.assertEqual(len(self.db.rows["conversations"]), int(not (table == "conversations" and phase == "after")))
 
@@ -180,8 +181,10 @@ class MutationAcknowledgmentTests(unittest.TestCase):
         for table in ("conversations", "messages"):
             for count in (None, 1):
                 with self.subTest(table=table, count=count):
+                    self.db.rows["conversations"].clear()
+                    self.db.seed_conversation()
                     self.db.requests.clear()
-                    self.db.hook = lambda stage, req, body: httpx.Response(200, headers={} if count is None else {"content-range": "*/1"}) if stage == "before" and req.method == "HEAD" and req.url.path.endswith("/" + table) else None
+                    self.db.hook = lambda stage, req, body: httpx.Response(200, headers={} if count is None else {"content-range": "*/1"}) if stage == "before" and req.method == "HEAD" and req.url.path.endswith("/" + table) and any(previous.method == "DELETE" and previous.url.path.endswith("/conversations") for previous in self.db.requests) else None
                     with self.assertRaises(PersistenceUnavailable):
                         conversations.delete_conversation("chat", "owner")
                     self.assertEqual(sum(req.method == "DELETE" for req in self.db.requests), 2)
@@ -325,7 +328,8 @@ class MutationAcknowledgmentTests(unittest.TestCase):
                 conversations.save_message("chat", "owner", "user", "committed")
             self.db.hook = lambda *args: None
             self.assertEqual(conversations.load_recent_messages("chat", "owner"), [{"role": "user", "content": "committed"}])
-            self.assertEqual(conversations.load_recent_messages("chat", "other"), [])
+            with self.assertRaises(PersistenceUnavailable):
+                conversations.load_recent_messages("chat", "other")
 
     def test_mutation_http_failures_are_sanitized_without_success_ack(self):
         from app.main import app
