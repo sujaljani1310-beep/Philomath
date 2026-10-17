@@ -57,6 +57,7 @@ type Conversation = {
   title: string
   preview: string
   messages: Message[]
+  historyStatus?: "loading" | "loaded" | "failed"
   lastUpdated: Date
 }
 
@@ -168,6 +169,10 @@ export default function AGIInterface() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const historyRequestsRef = useRef(new Set<string>())
+  const pendingConversationRef = useRef<string | null>(null)
+  const authGenerationRef = useRef(0)
+  const authIdentityRef = useRef<string | null>(null)
 
   const currentMode = modes.find((m) => m.id === selectedMode)
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
@@ -196,9 +201,11 @@ export default function AGIInterface() {
 
   const authorizedFetchWithRetry = useCallback(
     async (url: string, options: RequestInit = {}, maxAttempts = 6) => {
+      const generation = authGenerationRef.current
       let lastError: unknown = null
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (generation !== authGenerationRef.current) throw new Error("Session changed")
         const controller = new AbortController()
         const timeout = window.setTimeout(() => controller.abort(), 12000)
 
@@ -240,7 +247,8 @@ export default function AGIInterface() {
   )
 
   const loadIntegrations = useCallback(async () => {
-    if (!session?.access_token) return
+    if (!session?.access_token || session.user?.id !== authIdentityRef.current) return
+    const generation = authGenerationRef.current
 
     setIntegrationsLoading(true)
 
@@ -252,6 +260,7 @@ export default function AGIInterface() {
       }
 
       const data = await response.json()
+      if (generation !== authGenerationRef.current) return
       const items: AIIntegration[] = Array.isArray(data.integrations) ? data.integrations : []
 
       setIntegrations(items)
@@ -267,20 +276,24 @@ export default function AGIInterface() {
         )
       }
     } catch (error) {
+      if (generation !== authGenerationRef.current) return
       console.log("[Philomath] Could not load AI integrations:", error)
       showToast("Could not load your saved AIs.")
     } finally {
-      setIntegrationsLoading(false)
+      if (generation === authGenerationRef.current) setIntegrationsLoading(false)
     }
-  }, [authorizedFetchWithRetry, backendUrl, session?.access_token, showToast])
+  }, [authorizedFetchWithRetry, backendUrl, session?.access_token, session?.user?.id, showToast])
 
   const loadConversations = useCallback(async () => {
+    if (session?.user?.id !== authIdentityRef.current) return
+    const generation = authGenerationRef.current
     try {
       const response = await authorizedFetchWithRetry(`${backendUrl}/api/conversations`)
 
       if (!response.ok) return
 
       const data = await response.json()
+      if (generation !== authGenerationRef.current) return
 
       if (data.conversations && Array.isArray(data.conversations)) {
         const formattedConversations: Conversation[] = data.conversations.map((conv: any) => ({
@@ -291,24 +304,44 @@ export default function AGIInterface() {
           lastUpdated: new Date(conv.updated_at || conv.created_at || Date.now()),
         }))
 
+        const pendingConversationId = pendingConversationRef.current
         setConversations((prev) => {
-          const localEmptyChats = prev.filter((conv) => conv.messages.length === 0 && conv.title === "New Chat")
-          return [...localEmptyChats, ...formattedConversations]
+          const existingById = new Map(prev.map((conv) => [conv.id, conv]))
+          const serverIds = new Set(formattedConversations.map((conv) => conv.id))
+          const localChats = prev.filter((conv) => !serverIds.has(conv.id) &&
+            (conv.id === pendingConversationId || (conv.messages.length === 0 && conv.title === "New Chat")))
+          const refreshed = formattedConversations.map((conv) => {
+            const existing = existingById.get(conv.id)
+            if (!existing) return conv
+            if (conv.id === pendingConversationId) return existing
+            return {...conv, messages: existing.messages, historyStatus: existing.historyStatus}
+          })
+          return [...localChats, ...refreshed]
         })
       }
     } catch (error) {
       console.log("[Philomath] Could not load conversations from backend:", error)
     }
-  }, [authorizedFetchWithRetry, backendUrl])
+  }, [authorizedFetchWithRetry, backendUrl, session?.user?.id])
 
   const loadConversationMessages = useCallback(
     async (conversationId: string) => {
+      if (session?.user?.id !== authIdentityRef.current) return
+      // Sidebar selection can change before a pending reply finishes. Defer
+      // history reads across chats so a retry cannot replace that optimistic turn.
+      if (isLoading) return
+      const generation = authGenerationRef.current
+      const requestKey = `${generation}:${conversationId}`
+      if (historyRequestsRef.current.has(requestKey)) return
+      historyRequestsRef.current.add(requestKey)
+      setConversations((prev) => prev.map((conv) => conv.id === conversationId ? {...conv, historyStatus: "loading" as const} : conv))
       try {
         const response = await authorizedFetchWithRetry(`${backendUrl}/api/conversations/${conversationId}`)
 
         if (!response.ok) return
 
         const data = await response.json()
+        if (generation !== authGenerationRef.current) return
 
         if (data.messages && Array.isArray(data.messages)) {
           const formattedMessages: Message[] = data.messages.map((msg: any, index: number) => ({
@@ -328,6 +361,7 @@ export default function AGIInterface() {
                 ? {
                     ...conv,
                     messages: formattedMessages,
+                    historyStatus: "loaded" as const,
                   }
                 : conv,
             ),
@@ -335,9 +369,15 @@ export default function AGIInterface() {
         }
       } catch (error) {
         console.log("[Philomath] Could not load conversation messages:", error)
+      } finally {
+        historyRequestsRef.current.delete(requestKey)
+        if (generation === authGenerationRef.current) {
+          setConversations((prev) => prev.map((conv) => conv.id === conversationId && conv.historyStatus === "loading"
+            ? {...conv, historyStatus: "failed" as const} : conv))
+        }
       }
     },
-    [authorizedFetchWithRetry, backendUrl],
+    [authorizedFetchWithRetry, backendUrl, session?.user?.id, isLoading],
   )
 
   useEffect(() => {
@@ -349,30 +389,53 @@ export default function AGIInterface() {
     }
 
     let mounted = true
+    let authEventReceived = false
+    const applySession = (nextSession: any) => {
+      const nextIdentity = nextSession?.user?.id || null
+      if (authIdentityRef.current !== nextIdentity) {
+        authIdentityRef.current = nextIdentity
+        authGenerationRef.current += 1
+        historyRequestsRef.current.clear()
+        pendingConversationRef.current = null
+        setConversations([])
+        setActiveConversationId(null)
+        setIntegrations([])
+        setIntegrationsLoading(false)
+        setSelectedProvider(null)
+        setSelectedFiles([])
+        setInputValue("")
+        setAiApiKey("")
+        setAiName("")
+        setAddAiOpen(false)
+        setStartupLoading(false)
+        setIsLoading(false)
+        setAddingAi(false)
+        setSettingsOpen(false)
+      }
+      setSession(nextSession)
+      setAuthLoading(false)
+    }
 
     supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return
-      setSession(data.session)
-      setAuthLoading(false)
+      if (!mounted || authEventReceived) return
+      applySession(data.session)
+    }).catch(() => {
+      if (!mounted || authEventReceived) return
+      applySession(null)
     })
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return
+      authEventReceived = true
 
-      setSession(nextSession)
-      setAuthLoading(false)
-
-      if (!nextSession) {
-        setConversations([])
-        setActiveConversationId(null)
-        setIntegrations([])
-        setSelectedProvider(null)
-        setStartupLoading(false)
-      }
+      applySession(nextSession)
     })
 
     return () => {
       mounted = false
+      authGenerationRef.current += 1
+      historyRequestsRef.current.clear()
+      pendingConversationRef.current = null
       authListener.subscription.unsubscribe()
     }
   }, [])
@@ -412,7 +475,7 @@ export default function AGIInterface() {
 
     const conv = conversations.find((c) => c.id === activeConversationId)
 
-    if (conv && conv.messages.length === 0) {
+    if (conv && !conv.historyStatus && conv.messages.length === 0) {
       loadConversationMessages(activeConversationId)
     }
   }, [activeConversationId, conversations, loadConversationMessages])
@@ -422,7 +485,11 @@ export default function AGIInterface() {
   }, [currentMessages.length, isLoading])
 
   const handleSendMessage = async () => {
+    if (session?.user?.id !== authIdentityRef.current) return
+    const generation = authGenerationRef.current
     if (!inputValue.trim() || isLoading) return
+    if (activeConversation?.historyStatus === "loading" || (activeConversationId &&
+        historyRequestsRef.current.has(`${authGenerationRef.current}:${activeConversationId}`))) return
 
     if (selectedMode === "manual" && !selectedProvider) {
       showToast("Please select a provider first.")
@@ -434,6 +501,7 @@ export default function AGIInterface() {
     setIsLoading(true)
 
     let conversationId = activeConversationId
+    pendingConversationRef.current = conversationId
     let fileContext: string | null = null
     let hasFiles = false
 
@@ -449,12 +517,14 @@ export default function AGIInterface() {
           method: "POST",
           body: formData,
         })
+        if (generation !== authGenerationRef.current) return
 
         if (!uploadResponse.ok) {
           throw new Error("File upload failed")
         }
 
         const uploadData = await uploadResponse.json()
+        if (generation !== authGenerationRef.current) return
 
         if (!uploadData.success) {
           throw new Error("Backend did not accept the files")
@@ -486,12 +556,14 @@ export default function AGIInterface() {
 
     if (!conversationId) {
       conversationId = createConversationId()
+      pendingConversationRef.current = conversationId
 
       const newConversation: Conversation = {
         id: conversationId,
         title: userMessage.slice(0, 30) + (userMessage.length > 30 ? "..." : ""),
         preview: userMessage.slice(0, 50),
         messages: [newUserMessage],
+        historyStatus: "loaded",
         lastUpdated: new Date(),
       }
 
@@ -538,12 +610,14 @@ export default function AGIInterface() {
         },
         body: JSON.stringify(payload),
       })
+      if (generation !== authGenerationRef.current) return
 
       if (!response.ok) {
         throw new Error("Failed to get response from backend")
       }
 
       const data = await response.json()
+      if (generation !== authGenerationRef.current) return
 
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
@@ -577,6 +651,7 @@ export default function AGIInterface() {
         }
       }
     } catch (error) {
+      if (generation !== authGenerationRef.current) return
       console.log("[Philomath] Error sending message:", error)
 
       const errorMessage: Message = {
@@ -598,7 +673,10 @@ export default function AGIInterface() {
         ),
       )
     } finally {
-      setIsLoading(false)
+      if (generation === authGenerationRef.current) {
+        pendingConversationRef.current = null
+        setIsLoading(false)
+      }
     }
   }
 
@@ -619,6 +697,7 @@ export default function AGIInterface() {
       title: "New Chat",
       preview: "Start a new conversation...",
       messages: [],
+      historyStatus: "loaded",
       lastUpdated: new Date(),
     }
 
@@ -628,6 +707,8 @@ export default function AGIInterface() {
   }
 
  const handleDeleteChat = async (e: MouseEvent<HTMLButtonElement>, conversationId: string) => {
+  if (session?.user?.id !== authIdentityRef.current) return
+  const generation = authGenerationRef.current
   e.stopPropagation()
 
   // Remove from UI first so it feels instant
@@ -645,6 +726,7 @@ export default function AGIInterface() {
           title: "New Chat",
           preview: "Start a new conversation...",
           messages: [],
+          historyStatus: "loaded",
           lastUpdated: new Date(),
         }
 
@@ -665,6 +747,7 @@ export default function AGIInterface() {
       throw new Error("Delete request failed")
     }
   } catch (error) {
+    if (generation !== authGenerationRef.current) return
     console.log("[Philomath] Could not delete conversation from backend:", error)
     showToast("Could not delete this saved chat from Supabase.")
     loadConversations()
@@ -731,6 +814,8 @@ export default function AGIInterface() {
   }
 
   const handleAddAI = async () => {
+    if (session?.user?.id !== authIdentityRef.current) return
+    const generation = authGenerationRef.current
     if (!aiName.trim() || !aiApiKey.trim()) {
       showToast("Enter the AI name and API key.")
       return
@@ -751,6 +836,7 @@ export default function AGIInterface() {
       })
 
       const data = await response.json()
+      if (generation !== authGenerationRef.current) return
 
       if (!response.ok) {
         throw new Error(data.detail || "Could not add this AI")
@@ -762,18 +848,22 @@ export default function AGIInterface() {
       showToast(`${data.integration?.display_name || "AI"} added.`)
       await loadIntegrations()
     } catch (error) {
+      if (generation !== authGenerationRef.current) return
       const message = error instanceof Error ? error.message : "Could not add this AI"
       showToast(message)
     } finally {
-      setAddingAi(false)
+      if (generation === authGenerationRef.current) setAddingAi(false)
     }
   }
 
   const handleDeleteAI = async (provider: string) => {
+    if (session?.user?.id !== authIdentityRef.current) return
+    const generation = authGenerationRef.current
     try {
       const response = await authorizedFetch(`${backendUrl}/api/integrations/${provider}`, {
         method: "DELETE",
       })
+      if (generation !== authGenerationRef.current) return
 
       if (!response.ok) {
         throw new Error("Could not remove this AI")
@@ -782,6 +872,7 @@ export default function AGIInterface() {
       showToast("AI removed.")
       await loadIntegrations()
     } catch (error) {
+      if (generation !== authGenerationRef.current) return
       console.log("[Philomath] Could not remove AI:", error)
       showToast("Could not remove this AI.")
     }
@@ -807,6 +898,7 @@ export default function AGIInterface() {
               key={conversation.id}
               onClick={() => {
                 setActiveConversationId(conversation.id)
+                if (conversation.historyStatus === "failed") void loadConversationMessages(conversation.id)
                 setSidebarOpen(false)
               }}
               className={cn(
@@ -1375,7 +1467,7 @@ export default function AGIInterface() {
 
                   <Button
                     onClick={handleSendMessage}
-                    disabled={!inputValue.trim() || isLoading}
+                    disabled={!inputValue.trim() || isLoading || activeConversation?.historyStatus === "loading"}
                     size="sm"
                     className="ml-2 bg-blue-600 transition-all duration-200 hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-500/20 disabled:bg-gray-700 disabled:text-gray-400"
                   >

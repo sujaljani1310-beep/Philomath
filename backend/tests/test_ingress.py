@@ -286,6 +286,14 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upload_body_has_separate_bounded_budget(self):
         body = multipart([(b"files", b"sample.txt", b"hello")])
+        selected_budgets = []
+        actual_timeout = asyncio.timeout
+
+        def observe_timeout(budget):
+            selected_budgets.append(budget)
+            # This test checks policy selection, not scheduler speed. Real
+            # timeout/closure behavior is covered by the two preceding tests.
+            return actual_timeout(5)
 
         async def run(path, method, *, body_timeout=.01, upload_timeout=.2):
             output = []
@@ -296,7 +304,6 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
                 if sent:
                     return {"type": "http.disconnect"}
                 sent = True
-                await asyncio.sleep(.025)
                 return {"type": "http.request", "body": body}
 
             async def app(scope, receive, send):
@@ -308,15 +315,17 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
             async def send(message):
                 output.append(message)
 
-            await IngressMiddleware(app, body_timeout=body_timeout, upload_body_timeout=upload_timeout)(
-                {"type": "http", "path": path, "method": method, "headers": [CONTENT_TYPE]}, receive, send
-            )
+            with patch("app.ingress.asyncio.timeout", side_effect=observe_timeout):
+                await IngressMiddleware(app, body_timeout=body_timeout, upload_body_timeout=upload_timeout)(
+                    {"type": "http", "path": path, "method": method, "headers": [CONTENT_TYPE]}, receive, send
+                )
             return output[0]["status"]
 
         self.assertEqual(await run("/api/files/upload", "POST"), 200)
-        self.assertEqual(await run("/api/chat/send", "POST"), 504)
-        self.assertEqual(await run("/api/files/upload", "OPTIONS"), 504)
-        self.assertEqual(await run("/api/files/upload", "POST", upload_timeout=.01), 504)
+        self.assertEqual(await run("/api/chat/send", "POST"), 200)
+        self.assertEqual(await run("/api/files/upload", "OPTIONS"), 200)
+        self.assertEqual(await run("/api/files/upload", "POST", upload_timeout=.01), 200)
+        self.assertEqual(selected_budgets, [.2, .01, .01, .01])
 
     async def test_cancelled_body_cleans_up_without_response(self):
         started = asyncio.Event()

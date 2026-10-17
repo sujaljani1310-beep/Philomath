@@ -6,7 +6,7 @@ from app.models.schemas import ChatRequest
 from app.providers.budgets import ProviderInputBudgetExceeded
 from app.providers.cerebras_provider import call_cerebras
 from app.providers.gemini_provider import call_gemini_search
-from app.providers.grok_provider import call_grok
+from app.providers.grok_provider import call_grok, get_grok_model
 from app.providers.nvidia_provider import call_nvidia
 from app.providers.openrouter_provider import call_openrouter_basic
 from app.services.auth_service import AuthenticatedUser, get_current_user
@@ -47,6 +47,10 @@ PROVIDER_CALL_MAP = {
 
 
 MAX_FILE_CONTEXT_CHARS = 40_000
+
+
+def _model_used(provider: str) -> str:
+    return get_grok_model() if provider == "grok" else MODEL_USED.get(provider, "unknown")
 
 
 def clean_provider_error(error: Exception, provider: str) -> str:
@@ -292,7 +296,7 @@ def answer_basic_mode(
             user_id=user_id,
             answer=answer,
             provider_used=provider,
-            model_used=MODEL_USED[provider],
+            model_used=_model_used(provider),
             search_grounding_status=_search_status(provider),
         )
 
@@ -303,7 +307,7 @@ def answer_basic_mode(
         user_id=user_id,
         answer=clean_provider_error(error, provider),
         provider_used=provider,
-        model_used=MODEL_USED.get(provider, "unknown"),
+        model_used=_model_used(provider),
         search_grounding_status="failed",
     )
 
@@ -414,7 +418,7 @@ def answer_auto_mode(
         user_id=user_id,
         answer=clean_provider_error(error, provider),
         provider_used=provider,
-        model_used=MODEL_USED.get(provider, "unknown"),
+        model_used=_model_used(provider),
         search_grounding_status="failed",
         routing_meta=_routing_meta(
             decision,
@@ -481,7 +485,7 @@ def answer_manual_mode(
         user_id=user_id,
         answer=answer,
         provider_used=selected_provider,
-        model_used=MODEL_USED[selected_provider],
+        model_used=_model_used(selected_provider),
         search_grounding_status=search_status,
     )
 
@@ -546,9 +550,9 @@ def _send_chat(request: ChatRequest, user: AuthenticatedUser):
 
     except (ProviderInputBudgetExceeded, PersistenceUnavailable):
         raise
-    except Exception as error:
+    except Exception:
         return {
-            "answer": f"Something went wrong: {str(error)}",
+            "answer": "Something went wrong. Please try again.",
             "mode_used": request.mode,
             "provider_used": request.provider or "unknown",
             "model_used": "unknown",

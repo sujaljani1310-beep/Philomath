@@ -72,6 +72,17 @@ def route(
         working_models = filtered_models
     else:
         working_models = available_models
+        # Relaxing an unsupported inferred file capability must not discard a
+        # satisfiable search requirement. This is the same search-capable pool
+        # used when the prompt asks for current information without a file.
+        if (any(requirement.name == "file" for requirement in unmet_inferred)
+            and any(requirement.name == "search" for requirement in unmet_inferred)):
+            search_models = {key: model for key, model in available_models.items()
+                             if model.supports("search")}
+            if search_models:
+                working_models = search_models
+                unmet_inferred = [requirement for requirement in unmet_inferred
+                                  if requirement.name != "search"]
 
     decision = rank_models(
         profile,

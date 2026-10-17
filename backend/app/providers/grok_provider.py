@@ -11,6 +11,11 @@ BASE_URL = "https://api.x.ai/v1"
 MODEL = os.getenv("GROK_MODEL", "grok-4.3")
 
 
+def get_grok_model() -> str:
+    """Keep request and persisted model metadata on the same configuration."""
+    return os.getenv("GROK_MODEL", MODEL)
+
+
 def is_grok_connected(api_key: Optional[str] = None) -> bool:
     return bool(resolve_api_key(api_key, DEFAULT_API_KEY, "GROK_API_KEY"))
 
@@ -66,7 +71,7 @@ def call_grok(
 
     with timed_operation("provider.grok"), openai_client(BASE_URL, key) as client:
         response = client.chat.completions.create(
-            model=os.getenv("GROK_MODEL", MODEL),
+            model=get_grok_model(),
             messages=messages,
             max_tokens=OPENAI_OUTPUT_TOKENS,
         )

@@ -1,5 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, Iterable, Optional
+
+from app.providers.grok_provider import get_grok_model
 
 CATEGORIES = [
     "coding", "math", "reasoning", "creative",
@@ -95,7 +97,7 @@ def get_available_models(
     )
 
     return {
-        key: model
+        key: replace(model, model_used=get_grok_model()) if key == "grok" else model
         for key, model in MODEL_REGISTRY.items()
         if model.enabled and (allowed is None or key in allowed)
     }

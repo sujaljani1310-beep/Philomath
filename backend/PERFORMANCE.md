@@ -1,5 +1,17 @@
 # Backend performance changes for review
 
+## Batch 5: current evidence and release gates
+
+[BATCH5.md](BATCH5.md) records the measured import, first-use SDK, API, RSS,
+browser and startup-retry results, 363 passing Python regressions, 25 passing
+frontend logic tests, identical OpenAPI and independent READY FOR STAGING review.
+The approved loading/session and narrow routing fixes are implemented. Production
+release remains NEEDS FIXES / VALIDATION PENDING; [RELEASE.md](RELEASE.md) lists the
+remaining live-service, total generation-latency and rollout/rollback checks.
+The user reports Batch 4 hosted verification passed; this batch did not rerun
+hosted SQL or contact production. Sections below retain historical checkpoint
+claims, including their then-outstanding hosted validation status.
+
 ## Batch 4: checkpoint safeguards and tested migration candidates
 
 Current Batch 4 evidence is in [BATCH4.md](BATCH4.md) and the
