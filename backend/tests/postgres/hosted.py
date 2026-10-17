@@ -31,7 +31,7 @@ class API:
             headers["Prefer"] = prefer
         request = Request("https://" + package.STAGING_REF + ".supabase.co" + path,
             data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
-        opener = build_opener(staging.NoRedirect(), HTTPSHandler(context=ssl.create_default_context()))
+        opener = build_opener(staging.NoRedirect(), HTTPSHandler(context=staging.api_tls_context()))
         try:
             response = opener.open(request, timeout=12)
         except HTTPError as error:
@@ -55,11 +55,12 @@ def main():
     try:
         staging.reject_ambient_libpq_settings()
         target = staging.target_from_uri(os.environ.get("PHILOMATH_STAGING_DATABASE_URL", ""))
+        ca_file = staging.postgres_ca_file(ssl.get_default_verify_paths().cafile)
         staging.verify_api()
         import psycopg
         from cryptography.fernet import Fernet
         with psycopg.connect(host=target.host, port=5432, user=target.user, password=target.password,
-            dbname="postgres", sslmode="verify-full", sslrootcert=ssl.get_default_verify_paths().cafile,
+            dbname="postgres", sslmode="verify-full", sslrootcert=ca_file,
             connect_timeout=8, autocommit=True,
             options="-c session_replication_role=origin -c statement_timeout=5000 -c lock_timeout=2000") as conn:
             if not conn.pgconn.ssl_in_use:

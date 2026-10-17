@@ -108,8 +108,17 @@ def run():
         context = ssl.create_default_context(cafile=ca_file)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         checks.append({"phase": phase, "status": "PASS", "source": "certifi"})
+        api_context = context
+        phase = "postgres_ca_bundle"
+        ca_file = staging.postgres_ca_file(ca_file)
+        configured_ca = staging.POSTGRES_CA_ENV in os.environ
+        if configured_ca:
+            context = ssl.create_default_context(cafile=ca_file)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+        checks.append({"phase": phase, "status": "PASS",
+            "source": "configured" if configured_ca else "certifi"})
         phase = "api_tls_and_credentials"
-        verify_api(context)
+        verify_api(api_context)
         checks.append({"phase": phase, "status": "PASS"})
         phase = "tcp_connect"
         with socket.create_connection((target.host, 5432), timeout=TIMEOUT) as raw:
@@ -133,10 +142,11 @@ def run():
         parameters = dict(host=target.host, port=5432, user=target.user, password=target.password,
             dbname="postgres", sslmode="verify-full", sslrootcert=ca_file,
             connect_timeout=TIMEOUT, autocommit=True, application_name="philomath_batch4_diagnostic")
-        default_ca = ssl.get_default_verify_paths().cafile
+        runner_ca = ca_file if configured_ca else ssl.get_default_verify_paths().cafile
         profiles = (("libpq_minimal", {}),
             ("libpq_runner_startup_options", {"options": RUNNER_OPTIONS}),
-            ("libpq_existing_runner_default_ca", {"options": RUNNER_OPTIONS, "sslrootcert": default_ca}))
+            ("libpq_configured_runner_ca" if configured_ca else "libpq_existing_runner_default_ca",
+                {"options": RUNNER_OPTIONS, "sslrootcert": runner_ca}))
         for profile, extra in profiles:
             phase = profile + "_connection"
             with driver.connect(**(parameters | extra)) as conn:
@@ -152,7 +162,9 @@ def run():
                 checks.append({"phase": phase, "status": "PASS", "read_only_identity": True})
         report["status"] = "PASS"
     except Exception as error:
-        if isinstance(error, ProbeFailure):
+        if isinstance(error, staging.PostgresCAError):
+            failure = {"category": "tls", "reason": "configured_postgres_ca_invalid"}
+        elif isinstance(error, ProbeFailure):
             failure = {"category": "guard_or_protocol", "reason": error.args[0]}
         elif phase == "target_guard":
             failure = {"category": "safety_guard", "reason": "target_or_ambient_settings_rejected"}

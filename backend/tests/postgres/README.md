@@ -1,5 +1,80 @@
 # Batch 4 database execution and verification package
 
+## Focused read-only connection diagnostic (including macOS)
+
+From `backend/`, using the same Python environment as the failing connection:
+
+```sh
+python -B -m tests.postgres.diagnose
+```
+
+The diagnostic reads the existing three credential bindings and the optional
+`PHILOMATH_STAGING_CA_FILE` setting described below, reuses
+the staging/production and ambient-PG* guards, and prints sanitized JSON. It does
+not accept a DSN on the command line, print exception messages, run migrations or
+query user records. It first verifies the staging API using certifi, then tests
+TCP, PostgreSQL SSLRequest and hostname-verified TLS with no password sent by that
+probe. It reports the loaded libpq version/implementation and compares three
+authenticated read-only profiles: minimal startup, the runner's startup options,
+and the runner's CA path/options. With no explicit CA, these use certifi for the
+first two profiles and the runner's Python-default CA path for the third. With an
+explicit CA, every PostgreSQL profile and the TLS probe use that file; the third
+profile is named `libpq_configured_runner_ca`, with no default-CA fallback.
+Every profile retains `sslmode=verify-full`. Only session identity/read-only
+state is queried. These are connection probes, not write retries.
+
+Interpret the first failing phase/category:
+
+- `tcp_connect`/`network`: DNS, refusal, timeout or reachability.
+- `postgres_tls`/`tls`: PostgreSQL certificate/trust/hostname negotiation.
+- `libpq_load`/`libpq`: missing/unloadable client wrapper or architecture mismatch.
+- `libpq_minimal_connection`/`authentication`: PostgreSQL rejected authentication
+  or access; SQLSTATE `28P01` is invalid-password authentication, not a TLS error.
+- `libpq_runner_startup_options_connection`/`startup_configuration`: minimal
+  login worked but the original startup options were explicitly rejected.
+- `libpq_existing_runner_default_ca_connection`/`tls`: certifi profiles worked
+  while the existing default CA configuration failed. HTTPS using certifi alone
+  never establishes what libpq's default CA settings will do.
+
+Pooler routing, connection limits and upstream availability have separate safe
+categories. Unclassified errors remain explicitly unclassified; a connection
+close without SQLSTATE is not proof of a wrong password. A full PASS confirms
+these session checks only, not hosted schema/RLS validation. Do not share raw
+tracebacks, environment values, connection strings or passwords.
+
+## Explicit PostgreSQL CA certificate (including macOS)
+
+An official CA downloaded from the trusted staging Supabase dashboard can be
+configured without modifying certifi, the macOS Keychain, connection strings or
+repository files. Keep the certificate outside the repository. From `backend/`,
+in the Python environment where psycopg is already installed, with the three
+existing staging credentials privately configured:
+
+```sh
+PHILOMATH_STAGING_CA_FILE="$HOME/.config/philomath/certs/prod-ca-2021.crt" \
+  python3 -B -m tests.postgres.staging --action inspect
+```
+
+This command only inspects schema metadata in a read-only transaction. The
+certificate's filename does not select a project: the fixed staging-only target
+and production rejection remain enforced. The same setting works with
+`tests.postgres.diagnose` and `tests.postgres.hosted`; the hosted verifier still
+creates/deletes synthetic fixtures and is not a read-only command.
+
+The tool expands a literal `~`, resolves the path, and requires a readable PEM
+certificate file. Blank, missing, unreadable or malformed configured files fail
+before any network request. A validation/handshake failure is never retried with
+another CA or weaker TLS. Parsing does not prove provenance: trust only a CA
+obtained through the official dashboard, never a certificate copied from a
+failed/unverified connection. Do not set `PGSSLROOTCERT`: ambient `PG*` overrides
+remain forbidden. If the new setting is absent, PostgreSQL defaults are unchanged.
+
+All libpq sessions retain `sslmode=verify-full` and the original verified host.
+The diagnostic TLS probe retains hostname and certificate verification. HTTPS
+Auth/REST calls use certifi independently; the PostgreSQL CA is never added to
+HTTPS trust, and credential redirects remain forbidden. No system trust store or
+certificate bundle is modified, and paths/certificate contents are not reported.
+
 Checkpoint: `dd328a4`. Production is forbidden; the sole remote target is
 `tdiqzmaqvoynspmilwra`. No hosted SQL has been executed. Local PostgreSQL results
 are not evidence of Supabase Auth, PostgREST or the production security context.
@@ -68,7 +143,8 @@ They explicitly demonstrate that separate message submissions still duplicate.
 Do not run these commands until the staging target and access are approved.
 No IDE is required. Keep all values in private environment bindings; never put
 connection strings or keys in arguments, repository files, shell history or logs.
-Use exactly the three PHILOMATH_STAGING_* bindings. The runner rejects ambient
+Use the three credential bindings and, when needed, `PHILOMATH_STAGING_CA_FILE`.
+The runner rejects ambient
 PG* settings (especially PGSERVICE, PGHOSTADDR and PGOPTIONS) so they cannot
 silently override the approved host or disable constraint enforcement.
 

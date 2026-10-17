@@ -3,12 +3,50 @@ import argparse
 from dataclasses import dataclass, field
 import json
 import os
+from pathlib import Path
 import re
 import ssl
 from urllib.parse import parse_qsl, unquote, urlsplit
 from urllib.request import build_opener, HTTPSHandler, HTTPRedirectHandler, Request
 
 from . import package
+
+
+POSTGRES_CA_ENV = "PHILOMATH_STAGING_CA_FILE"
+
+
+class PostgresCAError(ValueError):
+    """A configured PostgreSQL trust file is unusable; never fall back."""
+
+
+def postgres_ca_file(default_ca):
+    """Use an explicit local PEM trust file, or the caller's existing default.
+
+    The operator must obtain this CA from a trusted source. Parsing a file does
+    not establish its provenance. It applies only to PostgreSQL, never HTTPS.
+    """
+    if POSTGRES_CA_ENV not in os.environ:
+        return default_ca
+    try:
+        value = os.environ[POSTGRES_CA_ENV]
+        if not value.strip() or any(c in value for c in "\r\n\x00"):
+            raise ValueError()
+        path = Path(value).expanduser().resolve(strict=True)
+        if not path.is_file():
+            raise ValueError()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cafile=str(path))
+    except (OSError, ValueError, RuntimeError):
+        raise PostgresCAError("Configured staging PostgreSQL CA file is invalid or unreadable") from None
+    return str(path)
+
+
+def api_tls_context():
+    # The private database CA must not become an HTTPS credential trust anchor.
+    import certifi
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 
 @dataclass(frozen=True)
@@ -56,7 +94,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def verify_api():
-    opener = build_opener(NoRedirect(), HTTPSHandler(context=ssl.create_default_context()))
+    opener = build_opener(NoRedirect(), HTTPSHandler(context=api_tls_context()))
     for name, path in (("PHILOMATH_STAGING_PUBLIC_KEY", "/auth/v1/settings"),
                        ("PHILOMATH_STAGING_SERVICE_ROLE_KEY", "/rest/v1/")):
         key = os.environ.get(name)
@@ -78,10 +116,11 @@ def main(argv=None):
     attempted_write = False
     try:
         target = target_from_uri(os.environ.get("PHILOMATH_STAGING_DATABASE_URL", ""))
+        ca_file = postgres_ca_file(ssl.get_default_verify_paths().cafile)
         verify_api()
         import psycopg  # Optional verification tooling, not an application dependency.
         with psycopg.connect(host=target.host, port=5432, user=target.user, password=target.password,
-            dbname="postgres", sslmode="verify-full", sslrootcert=ssl.get_default_verify_paths().cafile,
+            dbname="postgres", sslmode="verify-full", sslrootcert=ca_file,
             connect_timeout=8, autocommit=True, application_name="philomath_batch4_verified",
             options="-c session_replication_role=origin -c statement_timeout=20000 -c lock_timeout=2000") as conn:
             if not conn.pgconn.ssl_in_use:
