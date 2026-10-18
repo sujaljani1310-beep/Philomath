@@ -13,6 +13,26 @@ from tests.workflow_fixture import ANSWER, USER_IDS, WorkflowFixture
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_chat_rate_response_exposes_actual_refill_wait_without_replaying_generation(self):
+        with WorkflowFixture() as f:
+            clock = [10.0]
+            f.controller.clock = lambda: clock[0]
+            f.add_provider("openrouter")
+            for _ in range(4):
+                self.assertEqual(f.send().status_code, 200)
+            response = f.send()
+            self.assertEqual(response.status_code, 429)
+            self.assertIn("Request rate limit exceeded", response.json()["detail"])
+            self.assertEqual(response.headers["retry-after"], "3")
+            self.assertEqual(len(f.provider_calls), 4)
+            self.assertEqual(len(f.db.rows["messages"]), 8)
+            clock[0] += 1
+            self.assertEqual(f.send().headers["retry-after"], "2")
+            clock[0] += 2
+            self.assertEqual(f.send().status_code, 200)
+            self.assertEqual(len(f.provider_calls), 5)
+            self.assertEqual(f.controller.active, 0)
+
     def test_create_send_switch_modes_history_and_cleanup(self):
         with WorkflowFixture() as f:
             for path in ("/api/conversations", "/api/integrations"):
@@ -153,9 +173,52 @@ class WorkflowTests(unittest.TestCase):
                 first = pool.submit(f.send)
                 try:
                     self.assertTrue(entered.wait(3))
-                    self.assertEqual(f.send().status_code, 429)
+                    before_writes = sum(r.method in {"POST", "PATCH", "DELETE"} for r in f.db.requests)
+                    rejected = f.send()
+                    self.assertEqual(rejected.status_code, 429)
+                    self.assertIn("Too many concurrent requests", rejected.json()["detail"])
+                    self.assertEqual(sum(r.method in {"POST", "PATCH", "DELETE"} for r in f.db.requests), before_writes)
+                    self.assertEqual(len(f.provider_calls), 0)  # First call is still blocked before dispatch.
                 finally:
                     release.set()
                 self.assertEqual(first.result(timeout=3).status_code, 200)
             self.assertEqual(f.send().status_code, 200)
         self.assertEqual(f.controller.active, 0)
+
+    def test_history_503_keeps_public_error_but_distinguishes_private_categories_and_recovers(self):
+        failures = (
+            (httpx.ReadTimeout("synthetic-private-timeout"), "read_timeout"),
+            (httpx.RemoteProtocolError("synthetic-private-protocol"), "protocol_error"),
+            (httpx.Response(503, json={"message": "synthetic-private-upstream"}), "upstream_api"),
+            (httpx.Response(200, json=[{"id": "synthetic-invalid-row"}]), "validation_or_ownership"),
+        )
+        for failure, expected_category in failures:
+            with self.subTest(failure=type(failure).__name__), WorkflowFixture() as f:
+                f.db.seed_conversation(USER_IDS["synthetic-user-a"], "synthetic-history")
+                row = {"id": "synthetic-history-message", "conversation_id": "synthetic-history",
+                       "user_id": USER_IDS["synthetic-user-a"], "role": "user", "content": "Synthetic saved turn"}
+                f.db.rows["messages"].append(row)
+                def failed_read(phase, request, body):
+                    if phase == "before" and request.method == "GET" and request.url.path.endswith("/messages"):
+                        return failure
+                f.database_fault = failed_read
+                with patch("app.observability.record_timing") as record:
+                    response = f.request("GET", "/api/conversations/synthetic-history")
+                self.assertEqual(response.status_code, 503)
+                self.assertNotIn("synthetic-private", response.text)
+                self.assertEqual(response.json()["detail"],
+                    "The database operation could not be confirmed. Reload to check the current state before trying again.")
+                events = [call for call in record.call_args_list if call.args[0] == "db.conversation.messages"]
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].kwargs, {"outcome": "error"})
+                diagnoses = [call for call in record.call_args_list if call.args[0] == "db.read.failure"]
+                self.assertEqual(len(diagnoses), 1)
+                self.assertEqual(diagnoses[0].kwargs, {"read_operation": "conversation_history",
+                    "category": expected_category, "outcome": "error"})
+                self.assertEqual(f.db.rows["messages"], [row])
+                self.assertFalse(any(r.method in {"POST", "PATCH", "DELETE"} for r in f.db.requests))
+                f.database_fault = lambda *_: None
+                recovered = f.request("GET", "/api/conversations/synthetic-history")
+                self.assertEqual(recovered.status_code, 200)
+                self.assertEqual(recovered.json()["messages"], [row])
+                self.assertEqual(f.controller.active, 0)

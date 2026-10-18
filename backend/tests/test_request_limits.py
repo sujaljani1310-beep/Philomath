@@ -19,6 +19,76 @@ def policies(**changes):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_default_chat_user_burst_and_three_second_refill(self):
+        clock = [10.0]
+        controller = limits.AdmissionController(clock=lambda: clock[0])
+        def submit():
+            controller.acquire_global("chat")
+            state = limits._RequestState(controller, "chat", None)
+            try:
+                controller.acquire_user("synthetic-user", "chat")
+                state.user_id = "synthetic-user"
+            finally:
+                controller.release(state)
+        for _ in range(4):
+            submit()
+        for advance, expected_wait in ((0, "3"), (1, "2")):
+            clock[0] += advance
+            with self.assertRaises(HTTPException) as caught:
+                submit()
+            self.assertEqual(caught.exception.status_code, 429)
+            self.assertIn("Request rate limit exceeded", caught.exception.detail)
+            self.assertEqual(caught.exception.headers["Retry-After"], expected_wait)
+        clock[0] += 2
+        submit()
+        self.assertEqual(controller.active, 0)
+
+    def test_default_chat_global_rate_is_eight_burst_then_one_per_second(self):
+        clock = [10.0]
+        controller = limits.AdmissionController(clock=lambda: clock[0])
+        for _ in range(8):
+            controller.acquire_global("chat")
+            controller.release(limits._RequestState(controller, "chat", None))
+        with self.assertRaises(HTTPException) as caught:
+            controller.acquire_global("chat")
+        self.assertEqual(caught.exception.status_code, 429)
+        self.assertIn("Request rate limit exceeded", caught.exception.detail)
+        self.assertEqual(caught.exception.headers["Retry-After"], "1")
+        clock[0] += 1
+        controller.acquire_global("chat")
+        controller.release(limits._RequestState(controller, "chat", None))
+
+    def test_default_chat_global_concurrency_returns_503_not_429(self):
+        controller = limits.AdmissionController()
+        held = []
+        for _ in range(4):
+            controller.acquire_global("chat")
+            held.append(limits._RequestState(controller, "chat", None))
+        with self.assertRaises(HTTPException) as caught:
+            controller.acquire_global("chat")
+        self.assertEqual(caught.exception.status_code, 503)
+        for state in held:
+            controller.release(state)
+        self.assertEqual(controller.active, 0)
+
+    def test_read_quota_exhaustion_does_not_consume_chat_quota(self):
+        controller = limits.AdmissionController(clock=lambda: 10.0)
+        for _ in range(20):
+            controller.acquire_global("read")
+            controller.acquire_user("synthetic-user", "read")
+            controller.release(limits._RequestState(controller, "read", None, user_id="synthetic-user"))
+        controller.acquire_global("read")
+        try:
+            with self.assertRaises(HTTPException) as caught:
+                controller.acquire_user("synthetic-user", "read")
+            self.assertEqual(caught.exception.status_code, 429)
+        finally:
+            controller.release(limits._RequestState(controller, "read", None))
+        controller.acquire_global("chat")
+        controller.acquire_user("synthetic-user", "chat")
+        controller.release(limits._RequestState(controller, "chat", None, user_id="synthetic-user"))
+        self.assertEqual(controller.active, 0)
+
     def test_per_user_rate_refill_and_identity_isolation(self):
         clock = [10.0]
         controller = limits.AdmissionController(policies=policies(read=(8, 600, 100, 4, 60, 1)), clock=lambda: clock[0])

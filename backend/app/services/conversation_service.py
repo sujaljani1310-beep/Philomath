@@ -201,7 +201,7 @@ def get_all_conversations(user_id: str):
 
 @timed("db.conversation.messages")
 def get_conversation_messages(conversation_id: str, user_id: str):
-    with database_operation():
+    with database_operation(read_operation="conversation_history"):
         client = require_supabase()
         if not _has_owned_parent(client, conversation_id, user_id):
             return []

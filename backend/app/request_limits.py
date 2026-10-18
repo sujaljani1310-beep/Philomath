@@ -9,12 +9,15 @@ import asyncio
 from collections import OrderedDict
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from math import ceil
 from threading import Lock
-from time import monotonic
+from time import monotonic, perf_counter
 from weakref import WeakSet
 
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
+
+from app import observability
 
 
 STARTUP_DEADLINE_SECONDS = 10.0
@@ -29,6 +32,20 @@ POLICIES = {
 }
 
 
+def _admission_error(category, reason, status, detail, retry_after=1):
+    # Reuse the bounded nonblocking sink. A broken logger cannot change admission.
+    # No identity, URL, body, credentials or exception text enters this event.
+    try:
+        observability.record_timing(
+            "admission.reject", perf_counter(),
+            category=category if category in POLICIES else "unknown",
+            reason=reason, status=status, retry_after_seconds=retry_after,
+        )
+    except Exception:
+        pass
+    return HTTPException(status, detail, headers={"Retry-After": str(retry_after)})
+
+
 @dataclass
 class _Bucket:
     tokens: float
@@ -41,6 +58,15 @@ class _Bucket:
             return False
         self.tokens -= 1
         return True
+
+    def retry_after(self, rate):
+        # take() has just refreshed the rejected bucket at the current clock.
+        # Round up HTTP delta-seconds; do not consume/refund tokens or retry work.
+        if rate <= 0:
+            return 1  # No known refill time: preserve the existing polling hint.
+        # Multiply before subtracting to avoid rounding a one-third token into
+        # 2.0000000000000004 seconds and incorrectly advertising three seconds.
+        return max(1, ceil((60 - self.tokens * 60) / rate))
 
 
 @dataclass
@@ -68,11 +94,15 @@ class AdmissionController:
         with self.lock:
             cap, rate, burst, *_ = self.policies[category]
             if self.active >= self.max_active or self.by_category.get(category, 0) >= cap:
-                raise HTTPException(503, "Backend capacity is temporarily unavailable.", headers={"Retry-After": "1"})
+                # Concurrency completion cannot be predicted: one second is a
+                # polling hint, not a promise of capacity becoming available.
+                raise _admission_error(category, "global_capacity", 503,
+                    "Backend capacity is temporarily unavailable.")
             now = self.clock()
             bucket = self.buckets.setdefault(category, _Bucket(burst, now))
             if not bucket.take(now, rate, burst):
-                raise HTTPException(429, "Request rate limit exceeded. Try again shortly.", headers={"Retry-After": "1"})
+                raise _admission_error(category, "global_rate", 429,
+                    "Request rate limit exceeded. Try again shortly.", bucket.retry_after(rate))
             self.active += 1
             self.by_category[category] = self.by_category.get(category, 0) + 1
 
@@ -92,16 +122,19 @@ class AdmissionController:
             user = self.users.get(user_id)
             if user is None:
                 if len(self.users) >= self.max_users:
-                    raise HTTPException(503, "Backend capacity is temporarily unavailable.", headers={"Retry-After": "1"})
+                    raise _admission_error(category, "user_registry_capacity", 503,
+                        "Backend capacity is temporarily unavailable.")
                 user = self.users[user_id] = _User(now)
             self.users.move_to_end(user_id)
             user.seen = now
             _, _, _, cap, rate, burst = self.policies[category]
             if user.active.get(category, 0) >= cap:
-                raise HTTPException(429, "Too many concurrent requests. Try again shortly.", headers={"Retry-After": "1"})
+                raise _admission_error(category, "user_concurrency", 429,
+                    "Too many concurrent requests. Try again shortly.")
             bucket = user.buckets.setdefault(category, _Bucket(burst, now))
             if not bucket.take(now, rate, burst):
-                raise HTTPException(429, "Request rate limit exceeded. Try again shortly.", headers={"Retry-After": "1"})
+                raise _admission_error(category, "user_rate", 429,
+                    "Request rate limit exceeded. Try again shortly.", bucket.retry_after(rate))
             user.active[category] = user.active.get(category, 0) + 1
 
     def release(self, state):
