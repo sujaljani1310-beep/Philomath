@@ -1,10 +1,14 @@
-fastapi
-uvicorn[standard]
-python-dotenv
-supabase
-openai
-google-genai
-python-docx
-pypdf
-python-multipart
-cryptography
+# Tested CPython 3.12 / Linux dependency set; see DEPENDENCIES.md.
+-c requirements.lock
+
+fastapi==0.143.2
+uvicorn[standard]==0.54.0
+python-dotenv==1.2.4
+supabase==2.33.0
+openai==3.31.0
+google-genai==2.31.0
+python-docx==1.2.0
+pypdf==6.20.1
+python-multipart==0.0.32
+cryptography==50.0.2
+httpx==0.28.1

@@ -31,6 +31,31 @@ class SignalSource(Protocol):
         ...
 
 
+def _contains_ascii_math_expression(text: str) -> bool:
+    """Match the former digit/operator/digit pattern in one forward pass.
+
+    The former regex used ASCII digits and ``.`` without DOTALL: only ``\n``
+    interrupts a candidate; carriage returns and Unicode separators do not.
+    Remembering the earliest digit and subsequent operator is sufficient,
+    because any later ASCII digit completes a match on that same line.
+    """
+    digit_seen = False
+    operator_seen = False
+
+    for character in text:
+        if character == "\n":
+            digit_seen = False
+            operator_seen = False
+        elif "0" <= character <= "9":
+            if operator_seen:
+                return True
+            digit_seen = True
+        elif digit_seen and character in "+-*/=^":
+            operator_seen = True
+
+    return False
+
+
 class KeywordSignals:
     """Cheap deterministic keyword and pattern matching."""
 
@@ -96,7 +121,7 @@ class KeywordSignals:
     def _math(self, lower: str) -> float:
         score = 0.0
 
-        if re.search(r"[0-9].*[\+\-\*/=^].*[0-9]", lower) or "√" in lower:
+        if _contains_ascii_math_expression(lower) or "√" in lower:
             score += 0.4
 
         if any(

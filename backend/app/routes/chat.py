@@ -3,6 +3,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, Depends
 
 from app.models.schemas import ChatRequest
+from app.providers.budgets import ProviderInputBudgetExceeded
 from app.providers.cerebras_provider import call_cerebras
 from app.providers.gemini_provider import call_gemini_search
 from app.providers.grok_provider import call_grok
@@ -12,6 +13,7 @@ from app.services.auth_service import AuthenticatedUser, get_current_user
 from app.services.brain.context import RoutingContext
 from app.services.brain.router_brain import route as brain_route
 from app.services.conversation_service import (
+    conversation_history_snapshot,
     count_messages,
     ensure_conversation_exists,
     is_supabase_connected,
@@ -21,6 +23,7 @@ from app.services.integration_service import (
     get_user_provider_keys,
     normalize_provider_name,
 )
+from app.services.persistence import PersistenceUnavailable, database_operation, mutation_guard
 from app.services.router_service import needs_google_search
 
 router = APIRouter()
@@ -131,21 +134,24 @@ def save_and_return_response(
             "Try rephrasing the question."
         )
 
-    save_message(
-        conversation_id=conversation_id,
-        user_id=user_id,
-        role="user",
-        content=request.message,
-    )
-
-    save_message(
-        conversation_id=conversation_id,
-        user_id=user_id,
-        role="assistant",
-        content=answer,
-        provider_used=provider_used,
-        model_used=model_used,
-    )
+    with mutation_guard("conversation", (user_id, conversation_id)), database_operation():
+        save_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="user",
+            content=request.message,
+        )
+        save_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="assistant",
+            content=answer,
+            provider_used=provider_used,
+            model_used=model_used,
+        )
+        saved_messages = count_messages(conversation_id, user_id)
+        if type(saved_messages) is not int or saved_messages < 2:
+            raise PersistenceUnavailable()
 
     response = {
         "answer": answer,
@@ -154,7 +160,7 @@ def save_and_return_response(
         "model_used": model_used,
         "search_grounding": search_grounding_status,
         "conversation_id": conversation_id,
-        "saved_messages": count_messages(conversation_id, user_id),
+        "saved_messages": saved_messages,
     }
 
     if routing_meta is not None:
@@ -270,21 +276,25 @@ def answer_basic_mode(
                 user_id,
             )
 
-            has_next = index < len(candidates) - 1
-            if is_weak_answer(answer) and has_next:
-                continue
-
-            return save_and_return_response(
-                request=request,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                answer=answer,
-                provider_used=provider,
-                model_used=MODEL_USED[provider],
-                search_grounding_status=_search_status(provider),
-            )
+        except (ProviderInputBudgetExceeded, PersistenceUnavailable):
+            raise
         except Exception as error:
             last_error = (error, provider)
+            continue
+
+        has_next = index < len(candidates) - 1
+        if is_weak_answer(answer) and has_next:
+            continue
+        # Persistence is deliberately outside the generation failure handler.
+        return save_and_return_response(
+            request=request,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            answer=answer,
+            provider_used=provider,
+            model_used=MODEL_USED[provider],
+            search_grounding_status=_search_status(provider),
+        )
 
     error, provider = last_error or (Exception("No provider available"), candidates[0])
     return save_and_return_response(
@@ -371,27 +381,27 @@ def answer_auto_mode(
                 api_key,
                 user_id,
             )
-            has_next = rank_index < len(decision.ranked) - 1
-
-            if is_weak_answer(answer) and has_next:
-                continue
-
-            return save_and_return_response(
-                request=request,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                answer=answer,
-                provider_used=provider,
-                model_used=candidate.model_used,
-                search_grounding_status=_search_status(provider),
-                routing_meta=_routing_meta(
-                    decision,
-                    provider_used=provider,
-                    initial_provider=initial_provider,
-                ),
-            )
+        except (ProviderInputBudgetExceeded, PersistenceUnavailable):
+            raise
         except Exception as error:
             last_error = (error, provider)
+            continue
+
+        has_next = rank_index < len(decision.ranked) - 1
+        if is_weak_answer(answer) and has_next:
+            continue
+        return save_and_return_response(
+            request=request,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            answer=answer,
+            provider_used=provider,
+            model_used=candidate.model_used,
+            search_grounding_status=_search_status(provider),
+            routing_meta=_routing_meta(
+                decision, provider_used=provider, initial_provider=initial_provider,
+            ),
+        )
 
     error, provider = last_error or (
         Exception("Unknown routing failure"),
@@ -458,25 +468,22 @@ def answer_manual_mode(
             user_id,
         )
 
-        return save_and_return_response(
-            request=request,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            answer=answer,
-            provider_used=selected_provider,
-            model_used=MODEL_USED[selected_provider],
-            search_grounding_status=_search_status(selected_provider),
-        )
+    except (ProviderInputBudgetExceeded, PersistenceUnavailable):
+        raise
     except Exception as error:
-        return save_and_return_response(
-            request=request,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            answer=clean_provider_error(error, selected_provider),
-            provider_used=selected_provider,
-            model_used=MODEL_USED.get(selected_provider, "unknown"),
-            search_grounding_status="failed",
-        )
+        answer = clean_provider_error(error, selected_provider)
+        search_status = "failed"
+    else:
+        search_status = _search_status(selected_provider)
+    return save_and_return_response(
+        request=request,
+        conversation_id=conversation_id,
+        user_id=user_id,
+        answer=answer,
+        provider_used=selected_provider,
+        model_used=MODEL_USED[selected_provider],
+        search_grounding_status=search_status,
+    )
 
 
 @router.post("/api/chat/send")
@@ -484,14 +491,13 @@ def send_chat(
     request: ChatRequest,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
+    with conversation_history_snapshot():
+        return _send_chat(request, user)
+
+
+def _send_chat(request: ChatRequest, user: AuthenticatedUser):
     if not is_supabase_connected():
-        return {
-            "answer": "Supabase is not connected. Check the backend environment.",
-            "mode_used": request.mode,
-            "provider_used": "none",
-            "model_used": "none",
-            "conversation_id": request.conversation_id,
-        }
+        raise PersistenceUnavailable()
 
     conversation_id = request.conversation_id or "default"
 
@@ -500,14 +506,11 @@ def send_chat(
             "..." if len(request.message) > 30 else ""
         )
 
-        ensure_conversation_exists(
-            conversation_id,
-            request.mode,
-            user.id,
-            conversation_title,
-        )
-
-        provider_keys = get_user_provider_keys(user.id)
+        with database_operation():
+            ensure_conversation_exists(
+                conversation_id, request.mode, user.id, conversation_title,
+            )
+            provider_keys = get_user_provider_keys(user.id)
 
         if request.mode == "basic":
             return answer_basic_mode(
@@ -541,6 +544,8 @@ def send_chat(
             "conversation_id": conversation_id,
         }
 
+    except (ProviderInputBudgetExceeded, PersistenceUnavailable):
+        raise
     except Exception as error:
         return {
             "answer": f"Something went wrong: {str(error)}",
